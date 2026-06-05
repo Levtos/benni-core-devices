@@ -136,7 +136,10 @@ export function render(root, ctx) {
   root.innerHTML = `
     <div class="grid cols-2">
       <div class="card">
-        <h2>${draft.slug ? "Update sensor" : "Create sensor"}</h2>
+        <div class="section-head">
+          <h2>${draft.slug ? "Update sensor" : "Create sensor"}</h2>
+          ${draft.slug ? `<span class="mode-pill">Editing <span class="mono">${esc(draft.slug)}</span></span>` : `<span class="mode-pill">New device</span>`}
+        </div>
         <form id="deviceForm" class="form">
           <label>Existing
             <select name="edit_slug">
@@ -191,17 +194,22 @@ export function render(root, ctx) {
             </div>
           </div>
           <div class="row">
-            <button class="btn primary" type="submit">Save sensor</button>
-            <button class="btn" type="button" id="resetForm">New</button>
+            <button class="btn primary" type="submit">${draft.slug ? "Save changes" : "Create sensor"}</button>
+            <button class="btn" type="button" id="resetForm">${draft.slug ? "Cancel edit" : "New"}</button>
           </div>
         </form>
       </div>
       <div class="card">
         <h2>Current devices</h2>
         ${devices.length ? `<table>
-          <thead><tr><th>Slug</th><th>Type</th><th>State</th></tr></thead>
+          <thead><tr><th>Slug</th><th>Type</th><th>State</th><th></th></tr></thead>
           <tbody>${devices.map((device) => `
-            <tr><td class="mono">${esc(device.slug)}</td><td>${esc(device.config.device_type)}</td><td>${esc(device.state)}</td></tr>
+            <tr class="${device.slug === draft.slug ? "selected-row" : ""}">
+              <td class="mono">${esc(device.slug)}</td>
+              <td>${esc(device.config.device_type)}</td>
+              <td>${esc(device.state)}</td>
+              <td><button class="btn" type="button" data-edit-device="${esc(device.slug)}">Edit</button></td>
+            </tr>
           `).join("")}</tbody>
         </table>` : `<div class="empty">No devices configured.</div>`}
       </div>
@@ -228,7 +236,6 @@ export function render(root, ctx) {
   });
   form.elements.device_type.addEventListener("change", () => {
     syncDraftFromForm(root);
-    draft.slug = "";
     draft.device_type = form.elements.device_type.value;
     draft.fields = defaultFields(catalog, draft.device_type);
     draft.slots = {};
@@ -245,6 +252,13 @@ export function render(root, ctx) {
   root.querySelector("#resetForm").addEventListener("click", () => {
     root._draft = newDraft(catalog);
     ctx.rerender();
+  });
+  root.querySelectorAll("[data-edit-device]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const selected = devices.find((device) => device.slug === button.dataset.editDevice);
+      root._draft = draftFromDevice(catalog, selected);
+      ctx.rerender();
+    });
   });
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();

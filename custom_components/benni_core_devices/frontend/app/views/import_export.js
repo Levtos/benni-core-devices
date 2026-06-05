@@ -21,14 +21,12 @@ function reportCard(result) {
     </tr>`;
   }).join("");
   return `
-    <div class="card" style="margin-top:14px">
-      <div class="section-head">
-        <h2>${result.dry_run ? "Dry-Run Vorschau" : "Import-Ergebnis"}</h2>
-        <div class="row">${chip("info", `${result.devices} Devices`)}${chip("info", `${result.groups} Groups`)}</div>
-      </div>
-      ${rows ? `<table><thead><tr><th>Status</th><th>Entity</th><th>Typ</th><th>Hinweise</th></tr></thead><tbody>${rows}</tbody></table>`
-        : `<div class="muted">Keine Devices im Payload.</div>`}
-    </div>`;
+    <div class="warnbox ${result.report?.some((r) => r.derived_sources.length) ? "err" : ""}" style="margin-top:14px; ${result.report?.some((r) => r.derived_sources.length) ? "" : "border-color:var(--line);background:#24262f;color:var(--muted)"}">
+      <div class="row spread"><b>${result.dry_run ? "Dry-Run Vorschau" : "Import-Ergebnis"}</b>
+        <span>${chip("info", `${result.devices} Devices`)} ${chip("info", `${result.groups} Groups`)}</span></div>
+    </div>
+    ${rows ? `<table style="margin-top:8px"><thead><tr><th>Status</th><th>Entity</th><th>Typ</th><th>Hinweise</th></tr></thead><tbody>${rows}</tbody></table>`
+      : `<div class="muted" style="margin-top:8px">Keine Devices im Payload.</div>`}`;
 }
 
 function renderMemberPicker(root, ctx, st) {
@@ -37,32 +35,27 @@ function renderMemberPicker(root, ctx, st) {
   mount.innerHTML = "";
   const add = (val) => {
     const e = String(val || "").trim();
-    if (e && !st.group.members.includes(e)) { st.group.members.push(e); renderMembers(root, ctx, st); }
+    if (e && !st.group.members.includes(e)) { st.group.members.push(e); renderMembers(root, st); }
   };
   if (customElements.get("ha-entity-picker")) {
     const picker = document.createElement("ha-entity-picker");
-    picker.hass = ctx.hass;
-    picker.includeDomains = ["light"];
-    picker.allowCustomEntity = true;
+    picker.hass = ctx.hass; picker.includeDomains = ["light"]; picker.allowCustomEntity = true;
     picker.addEventListener("value-changed", (ev) => { add(ev.detail.value); picker.value = ""; });
     mount.appendChild(picker);
     return;
   }
   mount.innerHTML = `<div class="row"><input id="memberInput" placeholder="light.kitchen"><button class="btn" type="button" id="addMember">Add</button></div>`;
-  mount.querySelector("#addMember").addEventListener("click", () => {
-    const i = mount.querySelector("#memberInput"); add(i.value); i.value = "";
-  });
+  mount.querySelector("#addMember").addEventListener("click", () => { const i = mount.querySelector("#memberInput"); add(i.value); i.value = ""; });
 }
 
-function renderMembers(root, ctx, st) {
+function renderMembers(root, st) {
   const list = root.querySelector("#memberList");
   if (!list) return;
   list.innerHTML = st.group.members.length
-    ? st.group.members.map((e, idx) =>
-        `<span class="member-chip"><span class="mono">${esc(e)}</span><button type="button" data-rm="${idx}">×</button></span>`).join("")
+    ? st.group.members.map((e, idx) => `<span class="member-chip"><span class="mono">${esc(e)}</span><button type="button" data-rm="${idx}">×</button></span>`).join("")
     : `<span class="muted">Keine Mitglieder.</span>`;
   list.querySelectorAll("[data-rm]").forEach((b) =>
-    b.addEventListener("click", () => { st.group.members.splice(Number(b.dataset.rm), 1); renderMembers(root, ctx, st); }));
+    b.addEventListener("click", () => { st.group.members.splice(Number(b.dataset.rm), 1); renderMembers(root, st); }));
 }
 
 export function render(root, ctx) {
@@ -73,31 +66,32 @@ export function render(root, ctx) {
   const st = root._ie;
 
   root.innerHTML = `
+    <div class="card muted-card" style="margin-bottom:14px">
+      <div class="row"><ha-icon icon="mdi:shield-account"></ha-icon>
+        <span class="muted" style="font-size:12px">Admin-Bereich. Bulk-Import erwartet <b>rohe HA-Entities</b>. Quellen wie <span class="mono">*_atomic</span>/<span class="mono">*_combined</span>/<span class="mono">*_gate</span> werden im Dry-Run markiert und blockiert.</span></div>
+    </div>
     <div class="split">
       <div class="card">
         <h2>Bulk Import</h2>
-        <p class="muted" style="font-size:12px; margin:0 0 10px">
-          Nur rohe HA-Entities. <span class="mono">*_atomic</span>/<span class="mono">*_combined</span>/derived werden im Dry-Run markiert.
-        </p>
         <textarea id="bulk" spellcheck="false" placeholder="- slug: tv&#10;  device_type: tv&#10;  integration_entity: media_player.living_lgtv">${esc(st.bulk)}</textarea>
         <div class="row" style="margin-top:10px">
           <button class="btn" type="button" id="dryRun">Dry Run / Vorschau</button>
-          <button class="btn primary" type="button" id="doImport">Import</button>
+          <button class="btn primary" type="button" id="doImport">Import ausführen</button>
         </div>
         <div id="reportMount">${reportCard(st.report)}</div>
       </div>
       <div class="card">
         <h2>Export</h2>
-        <p class="muted" style="font-size:12px; margin:0 0 10px">Aktuelle Builder-Konfiguration (Devices, Combineds, Groups).</p>
+        <p class="muted" style="font-size:12px; margin:0 0 10px">Aktuelle Builder-Konfiguration als YAML (Devices, Combineds, Groups).</p>
         <button class="btn" type="button" id="doExport">Konfiguration exportieren</button>
-        ${st.exportYaml ? `<textarea readonly style="margin-top:10px; min-height:200px">${esc(st.exportYaml)}</textarea>` : ""}
+        ${st.exportYaml ? `<textarea readonly style="margin-top:10px; min-height:220px">${esc(st.exportYaml)}</textarea>` : ""}
       </div>
     </div>
 
-    <div class="card" style="margin-top:14px">
-      <details>
-        <summary style="cursor:pointer; color:var(--muted)">Light Groups (untergeordnet)</summary>
-        <div class="split" style="margin-top:12px">
+    <details class="disclosure" style="margin-top:14px">
+      <summary>Light Groups <small>· untergeordnet</small></summary>
+      <div class="disclosure-body">
+        <div class="split">
           <div>
             <form id="groupForm" class="form">
               <label>Name<input name="display_name" value="${esc(st.group.display_name)}"></label>
@@ -113,8 +107,8 @@ export function render(root, ctx) {
               : `<div class="empty">Keine Gruppen.</div>`}
           </div>
         </div>
-      </details>
-    </div>`;
+      </div>
+    </details>`;
 
   const bulk = root.querySelector("#bulk");
   bulk.addEventListener("input", () => { st.bulk = bulk.value; });
@@ -128,25 +122,19 @@ export function render(root, ctx) {
       ctx.toast(dryRun ? "Dry-Run fertig" : `Importiert: ${res.devices} Devices`);
       if (!dryRun) ctx.rerender();
     } catch (err) {
-      root.querySelector("#reportMount").innerHTML =
-        `<div class="warnbox err" style="margin-top:14px">${esc(err.message || err)}</div>`;
+      root.querySelector("#reportMount").innerHTML = `<div class="warnbox err" style="margin-top:14px">${esc(err.message || err)}</div>`;
     }
   };
   root.querySelector("#dryRun").addEventListener("click", () => runImport(true));
   root.querySelector("#doImport").addEventListener("click", () => runImport(false));
 
   root.querySelector("#doExport").addEventListener("click", async () => {
-    try {
-      const res = await ctx.store.exportConfig();
-      st.exportYaml = res.yaml || "";
-      ctx.rerender();
-    } catch (err) {
-      ctx.toast("Export fehlgeschlagen");
-    }
+    try { const res = await ctx.store.exportConfig(); st.exportYaml = res.yaml || ""; ctx.rerender(); }
+    catch (err) { ctx.toast("Export fehlgeschlagen"); }
   });
 
   renderMemberPicker(root, ctx, st);
-  renderMembers(root, ctx, st);
+  renderMembers(root, st);
   const gf = root.querySelector("#groupForm");
   gf.elements.display_name.addEventListener("input", () => { st.group.display_name = gf.elements.display_name.value; });
   gf.addEventListener("submit", async (ev) => {
@@ -158,7 +146,5 @@ export function render(root, ctx) {
     ctx.toast("Gruppe gespeichert"); ctx.rerender();
   });
   root.querySelectorAll("[data-rm-group]").forEach((b) =>
-    b.addEventListener("click", async () => {
-      await ctx.store.removeGroup(b.dataset.rmGroup); ctx.toast("Gruppe entfernt"); ctx.rerender();
-    }));
+    b.addEventListener("click", async () => { await ctx.store.removeGroup(b.dataset.rmGroup); ctx.toast("Gruppe entfernt"); ctx.rerender(); }));
 }

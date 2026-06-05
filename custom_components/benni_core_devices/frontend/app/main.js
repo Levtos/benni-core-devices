@@ -5,15 +5,20 @@ import * as builder from "./views/builder.js";
 import * as combined from "./views/combined.js";
 import * as importExport from "./views/import_export.js";
 
-const NAV = [
-  { id: "diagnose", label: "Diagnose", icon: "mdi:stethoscope", view: diagnose },
-  { id: "builder", label: "Atomic Builder", icon: "mdi:cube-outline", view: builder },
-  { id: "combined", label: "Combined Builder", icon: "mdi:set-merge", view: combined },
-  { id: "import_export", label: "Import / Export", icon: "mdi:swap-vertical", view: importExport },
+const VIEWS = {
+  diagnose: { label: "Diagnose", icon: "mdi:stethoscope", view: diagnose },
+  builder: { label: "Atomic Builder", icon: "mdi:cube-outline", view: builder },
+  combined: { label: "Combined Builder", icon: "mdi:set-merge", view: combined, expert: true },
+  import_export: { label: "Import / Export", icon: "mdi:swap-vertical", view: importExport, expert: true },
+};
+
+// Sidebar-Gruppen: Standard (geringe kognitive Last) vs. Experte.
+const NAV_GROUPS = [
+  { label: null, ids: ["diagnose", "builder"] },
+  { label: "Experte", ids: ["combined", "import_export"] },
 ];
 
-// Views, die einen Form-Draft halten und nicht bei jedem Live-Refresh
-// neu gerendert werden sollen.
+// Views mit Form-Draft, die nicht bei jedem Live-Refresh neu gerendert werden.
 const DRAFT_VIEWS = new Set(["builder", "combined", "import_export"]);
 
 class BcdApp extends HTMLElement {
@@ -70,6 +75,7 @@ class BcdApp extends HTMLElement {
   }
 
   _navigate(id) {
+    if (!VIEWS[id]) return;
     this._view = id;
     this.shadowRoot.querySelectorAll(".nav button").forEach((b) =>
       b.classList.toggle("active", b.dataset.id === this._view));
@@ -77,17 +83,27 @@ class BcdApp extends HTMLElement {
   }
 
   _renderShell() {
-    const nav = NAV.map((item) => `
-      <button data-id="${esc(item.id)}" class="${item.id === this._view ? "active" : ""}">
-        <ha-icon icon="${esc(item.icon)}"></ha-icon>${esc(item.label)}
-      </button>`).join("");
+    const nav = NAV_GROUPS.map((group) => {
+      const sep = group.label ? `<div class="sep">${esc(group.label)}</div>` : "";
+      const items = group.ids.map((id) => {
+        const item = VIEWS[id];
+        return `
+          <button data-id="${esc(id)}" class="${id === this._view ? "active" : ""}">
+            <ha-icon icon="${esc(item.icon)}"></ha-icon>
+            <span class="grow">${esc(item.label)}</span>
+            ${item.expert ? `<span class="exp-badge">Experte</span>` : ""}
+          </button>`;
+      }).join("");
+      return sep + items;
+    }).join("");
+
     this.shadowRoot.innerHTML = `
       <style>${CSS}</style>
       <div class="app">
         <aside class="sidebar">
           <div class="brand">
             <div class="logo"><ha-icon icon="mdi:atom"></ha-icon></div>
-            <div><b>Benni Core Devices</b><small>Atomic device &amp; combined logic</small></div>
+            <div><b>Benni Core Devices</b><small>Atomic-Werkstatt</small></div>
           </div>
           <nav class="nav">${nav}</nav>
           <div class="sb-foot" id="foot">benni_core_devices</div>
@@ -147,7 +163,7 @@ class BcdApp extends HTMLElement {
   }
 
   _renderView() {
-    const item = NAV.find((n) => n.id === this._view) || NAV[0];
+    const item = VIEWS[this._view] || VIEWS.diagnose;
     const title = this.shadowRoot.getElementById("title");
     const content = this.shadowRoot.getElementById("content");
     if (!content) return;

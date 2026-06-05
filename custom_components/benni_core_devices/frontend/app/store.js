@@ -46,10 +46,30 @@ export class Store {
     return result;
   }
 
-  async bulkImport(payload) {
-    const result = await this._ws({ type: `${DOMAIN}/bulk_import`, payload });
+  async bulkImport(payload, dryRun = false) {
+    const result = await this._ws({
+      type: `${DOMAIN}/bulk_import`,
+      payload,
+      dry_run: dryRun,
+    });
+    if (!dryRun) await this.refresh();
+    return result;
+  }
+
+  async setCombined(payload) {
+    const result = await this._ws({ type: `${DOMAIN}/set_combined`, ...payload });
     await this.refresh();
     return result;
+  }
+
+  async removeCombined(slug) {
+    const result = await this._ws({ type: `${DOMAIN}/remove_combined`, slug });
+    await this.refresh();
+    return result;
+  }
+
+  async exportConfig() {
+    return this._ws({ type: `${DOMAIN}/export_config` });
   }
 }
 

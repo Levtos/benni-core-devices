@@ -59,6 +59,13 @@ class DeviceConfig:
     area_id: str | None = None
     # Slot-Schlüssel die der User konfiguriert hat (für Reading-Lookup)
     configured_slots: tuple[str, ...] = ()
+    # Rich-Atomic-Rework (additiv, beeinflusst die Power-Regeln NICHT):
+    # Slot-Key → Entity-ID (für Slot-Diagnose + Attribut-Export).
+    slot_entities: dict[str, str] = field(default_factory=dict)
+    # Aktivierte Felder (auch ohne Entity → für missing_sources-Warnung).
+    fields: tuple[str, ...] = ()
+    # Wake-on-LAN MAC (Text-Slot, keine Entity).
+    wake_mac: str | None = None
 
 
 @dataclass(frozen=True)

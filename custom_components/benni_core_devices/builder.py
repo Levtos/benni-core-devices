@@ -79,6 +79,15 @@ FIELD_LABELS: dict[str, str] = {
     "position_entity": "Positions-Sensor (sensor)",
     "climate_entity": "Thermostat / Klima (climate)",
     "value_entity": "Wert-Sensor (sensor)",
+    "current_sensor": "Strom-Sensor (sensor)",
+    "voltage_sensor": "Spannungs-Sensor (sensor)",
+    "energy_sensor": "Energie-Sensor (sensor)",
+    "network_switch_entity": "Netzwerk-/Internetzugang (switch)",
+    "wake_button_entity": "Wake-on-LAN Button (button)",
+    "wake_mac": "Wake-on-LAN MAC (Text)",
+    "remote_entity": "Fernbedienung (remote)",
+    "companion_media_player": "Companion Media Player (media_player)",
+    "companion_tracker": "Companion Tracker (device_tracker)",
 }
 
 _WATT_ROWS: tuple[tuple[str, str, str], ...] = (
@@ -139,9 +148,15 @@ def _slots_schema(field_keys: list[str], defaults: dict[str, Any]) -> vol.Schema
         spec = SLOT_CATALOG.get(key)
         if spec is None:
             continue
-        sel = selector.EntitySelector(
-            selector.EntitySelectorConfig(domain=list(spec.domains), multiple=False)
-        )
+        if spec.kind == "text":
+            # Text-Slot (z. B. wake_mac) — kein Entity-Picker.
+            sel: Any = selector.TextSelector()
+        else:
+            sel = selector.EntitySelector(
+                selector.EntitySelectorConfig(
+                    domain=list(spec.domains), multiple=False
+                )
+            )
         default = defaults.get(key)
         fields[vol.Required(key, default=default) if default else vol.Required(key)] = sel
     return vol.Schema(fields)

@@ -602,6 +602,56 @@ def test_unique_slug_appends_counter():
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Rich-Atomic-Rework: Source-Classifier (LH §5)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def test_classify_source_blocks_atomic_and_combined():
+    import bcd_device_types as DT
+
+    assert DT.classify_source_entity("binary_sensor.living_open_atomic") == "atomic"
+    assert DT.classify_source_entity("sensor.opening_state_combined") == "combined"
+    assert DT.classify_source_entity("binary_sensor.x_gate") == "gate"
+    # Rohe Quelle ist sauber
+    assert DT.classify_source_entity("media_player.living_lgtv") is None
+    # Nicht-String / kein Punkt
+    assert DT.classify_source_entity(None) is None
+    assert DT.classify_source_entity("noentity") is None
+
+
+def test_classify_source_detects_own_entities():
+    import bcd_device_types as DT
+
+    own = ("benni_device_", "benni_combined_")
+    assert DT.classify_source_entity("sensor.benni_device_tv", own_prefixes=own) == "own"
+    assert DT.classify_source_entity("sensor.benni_combined_opening", own_prefixes=own) == "own"
+    assert DT.classify_source_entity("sensor.benni_device_tv") is None  # ohne Präfixe
+
+
+def test_new_slots_in_catalog_with_groups():
+    import bcd_device_types as DT
+
+    for key in (
+        "current_sensor", "voltage_sensor", "energy_sensor",
+        "network_switch_entity", "wake_button_entity", "remote_entity",
+        "companion_media_player", "companion_tracker", "wake_mac",
+    ):
+        assert key in DT.SLOT_CATALOG, f"{key} fehlt im Katalog"
+        assert DT.SLOT_CATALOG[key].group in DT.SLOT_GROUP_ORDER
+
+
+def test_wake_mac_is_text_slot_not_entity_slot():
+    import bcd_device_types as DT
+
+    assert DT.SLOT_CATALOG["wake_mac"].kind == "text"
+    assert "wake_mac" not in DT.ENTITY_SLOT_KEYS
+    assert "wake_mac" in DT.TEXT_SLOT_KEYS
+    # Entity-Slots haben mindestens eine Domain
+    for key in DT.ENTITY_SLOT_KEYS:
+        assert DT.SLOT_CATALOG[key].domains, f"{key} ohne Domain"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Climate-Typ (nur rohe Wahrheiten, keine comfort/eco-Bewertung)
 # ─────────────────────────────────────────────────────────────────────────────
 

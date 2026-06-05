@@ -1,7 +1,14 @@
-"""WebSocket API for the Benni Core Devices panel."""
+"""WebSocket API for the Benni Core Devices panel.
+
+Liefert den Diagnose-Status (Devices + Combineds + Reverse-Lookups), den
+Builder-Katalog (Slots/Gruppen/Operatoren/Output-Typen) sowie CRUD für Devices,
+Combineds und Light-Groups. Import unterstützt Dry-Run mit Validierungsreport;
+problematische Quellen (`*_atomic`/`*_combined`/derived) werden gewarnt.
+"""
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import voluptuous as vol
@@ -12,6 +19,7 @@ from homeassistant.core import HomeAssistant
 
 from .builder import _build_device_conf
 from .const import (
+    CONF_COMBINEDS,
     CONF_DEVICE_TYPE,
     CONF_DEVICES,
     CONF_DISPLAY_NAME,
@@ -22,30 +30,46 @@ from .const import (
     CONF_PROFILE,
     CONF_SLUG,
     CONF_STICKY_HOLD_SECONDS,
+    CONF_WAKE_MAC,
     CONF_WATT_BUCKETS,
     CONF_WATT_THRESHOLD_ON,
+    COMBINED_OPERATOR_CHOICES,
+    COMBINED_ROLE_CHOICES,
     DEFAULT_EXPOSE_SECONDARY_SENSORS,
     DEFAULT_PROFILE,
     DEFAULT_STICKY_HOLD_SECONDS,
     DEFAULT_WATT_THRESHOLD_ON,
     DOMAIN,
+    OUTPUT_TYPE_CHOICES,
     PROFILE_LABELS,
     WATT_OPERATOR_CHOICES,
     WS_BULK_IMPORT,
+    WS_EXPORT_CONFIG,
     WS_GET_CATALOG,
     WS_GET_STATUS,
+    WS_REMOVE_COMBINED,
     WS_REMOVE_DEVICE,
     WS_REMOVE_GROUP,
+    WS_SET_COMBINED,
     WS_SET_DEVICE,
     WS_SET_GROUP,
     DeviceType,
+    combined_object_id_prefix,
+    device_object_id_prefix,
+    entry_profile,
+    group_object_id_prefix,
 )
-from .coordinator import all_coordinators
+from .coordinator import all_coordinators, combined_coordinators_for_entry
 from .device_types import (
     ALL_SLOT_KEYS,
+    ENTITY_SLOT_KEYS,
     SLOT_CATALOG,
+    SLOT_GROUP_LABELS,
+    SLOT_GROUP_ORDER,
+    classify_source_entity,
     default_fields,
     slugify,
+    source_warning_text,
     unique_slug,
     validate_import_payload,
 )
@@ -68,6 +92,11 @@ def _groups(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _combineds(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
+    raw = entry.options.get(CONF_COMBINEDS)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 async def _update_options(
     hass: HomeAssistant, entry: ConfigEntry, options: dict[str, Any]
 ) -> None:
@@ -75,61 +104,114 @@ async def _update_options(
     await hass.config_entries.async_reload(entry.entry_id)
 
 
-def _result_attrs(coord) -> dict[str, Any]:
-    result = coord.data
-    if result is None:
-        return {}
-    attrs: dict[str, Any] = {
-        "device_type": coord.device_type.value,
-        "slug": coord.slug,
-        "display_name": coord.display_name,
-        "powered": result.powered,
-        "power_state": result.power_state,
-        "available": result.available,
-        "power_source": result.power_source,
-        "last_powered_change": (
-            result.last_powered_change.isoformat()
-            if result.last_powered_change
-            else None
-        ),
-        "override_active": result.override_active,
-        "watt_disagrees": result.watt_disagrees,
-        "area_id": coord._derive_area_id(),
-        "watt": result.watt,
-    }
-    from .device_types import profile_for
+def _json_safe(value: Any) -> Any:
+    """Macht ein Attribut-Dict JSON-fähig (datetime → ISO-String)."""
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(v) for v in value]
+    return value
 
-    profile = profile_for(coord.device_type)
-    for key in profile.extra_attributes:
-        if key == "watt":
-            attrs[key] = result.watt
-        elif key in ("media_player_state", "hvac_mode"):
-            attrs[key] = result.raw_state if profile.state_slot else None
-        elif key == "target_temperature":
-            attrs[key] = result.extra.get("temperature")
-        else:
-            attrs[key] = result.extra.get(key)
-    return attrs
+
+def _own_prefixes(profile: str) -> tuple[str, ...]:
+    return (
+        device_object_id_prefix(profile),
+        group_object_id_prefix(profile),
+        combined_object_id_prefix(profile),
+    )
+
+
+def _source_warnings(conf: dict[str, Any], profile: str) -> list[str]:
+    """Warnt bei problematischen Slot-Quellen (LH §5)."""
+    own = _own_prefixes(profile)
+    out: list[str] = []
+    for key in ENTITY_SLOT_KEYS:
+        eid = conf.get(key)
+        if not eid:
+            continue
+        category = classify_source_entity(str(eid), own_prefixes=own)
+        if category:
+            out.append(source_warning_text(category, str(eid)))
+    return out
+
+
+def _device_sensor_entity_id(profile: str, slug: str) -> str:
+    return f"sensor.{device_object_id_prefix(profile)}{slug}"
+
+
+def _consumed_by_index(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> dict[str, list[str]]:
+    """Reverse-Lookup: device-sensor entity_id → Combined-Slugs, die ihn nutzen."""
+    index: dict[str, list[str]] = {}
+    for coord in combined_coordinators_for_entry(hass, entry).values():
+        for src in coord.config.sources:
+            if src.entity:
+                index.setdefault(src.entity, []).append(coord.slug)
+    return index
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# STATUS
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
+    profile = entry_profile(entry)
     coords = all_coordinators(hass)
     coord_by_slug = {coord.slug: coord for coord in coords}
+    consumed_by = _consumed_by_index(hass, entry)
+
     devices = []
     for slug, conf in _devices(entry).items():
         coord = coord_by_slug.get(slug)
         result = coord.data if coord else None
+        attrs = _json_safe(coord.main_attributes) if coord else {}
+        sensor_id = _device_sensor_entity_id(profile, slug)
         devices.append(
             {
                 "slug": slug,
                 "config": {**conf, CONF_SLUG: slug},
+                "entity_id": sensor_id,
                 "state": result.state if result else None,
-                "attrs": _result_attrs(coord) if coord else {},
+                "attrs": attrs,
                 "slots": {
                     key: conf.get(key)
                     for key in ALL_SLOT_KEYS
                     if conf.get(key)
                 },
+                "warnings": _source_warnings(conf, profile),
+                "consumed_by": consumed_by.get(sensor_id, []),
+            }
+        )
+
+    combineds = []
+    for slug, coord in combined_coordinators_for_entry(hass, entry).items():
+        result = coord.data
+        derived = [
+            {
+                "slug": d.slug,
+                "name": d.name,
+                "device_class": d.device_class,
+                "state": coord.derived_state(d),
+                "entity_id": (
+                    f"binary_sensor.{combined_object_id_prefix(profile)}{slug}_{d.slug}"
+                ),
+            }
+            for d in coord.config.derived
+        ]
+        combineds.append(
+            {
+                "slug": slug,
+                "display_name": coord.config.display_name,
+                "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
+                "state": result.state if result else None,
+                "output_type": coord.config.output_type,
+                "config": _combineds(entry).get(slug, {}),
+                "attrs": _json_safe(coord.attributes),
+                "derived": derived,
             }
         )
 
@@ -157,14 +239,21 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
             }
         )
 
-    profile = entry.data.get(CONF_PROFILE, DEFAULT_PROFILE)
     return {
-        "profile": profile,
-        "profile_label": PROFILE_LABELS.get(profile, profile),
+        "profile": entry.data.get(CONF_PROFILE, DEFAULT_PROFILE),
+        "profile_label": PROFILE_LABELS.get(
+            entry.data.get(CONF_PROFILE, DEFAULT_PROFILE), profile
+        ),
         "entry_id": entry.entry_id,
         "devices": devices,
+        "combineds": combineds,
         "groups": groups,
     }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# KATALOG
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _catalog() -> dict[str, Any]:
@@ -182,10 +271,21 @@ def _catalog() -> dict[str, Any]:
                 "key": spec.key,
                 "domains": list(spec.domains),
                 "label": spec.description,
+                "group": spec.group,
+                "role": spec.role,
+                "kind": spec.kind,
             }
             for key, spec in SLOT_CATALOG.items()
         },
+        "slot_groups": [
+            {"key": g, "label": SLOT_GROUP_LABELS.get(g, g)} for g in SLOT_GROUP_ORDER
+        ],
         "watt_operators": list(WATT_OPERATOR_CHOICES),
+        "combined": {
+            "operators": list(COMBINED_OPERATOR_CHOICES),
+            "output_types": list(OUTPUT_TYPE_CHOICES),
+            "roles": list(COMBINED_ROLE_CHOICES),
+        },
         "defaults": {
             "watt_threshold_on": DEFAULT_WATT_THRESHOLD_ON,
             "sticky_hold_seconds": DEFAULT_STICKY_HOLD_SECONDS,
@@ -194,7 +294,14 @@ def _catalog() -> dict[str, Any]:
     }
 
 
-def _device_conf_from_msg(msg: dict[str, Any], existing: set[str]) -> tuple[str, dict[str, Any]]:
+# ─────────────────────────────────────────────────────────────────────────────
+# DEVICE-CONF aus Message
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _device_conf_from_msg(
+    msg: dict[str, Any], existing: set[str]
+) -> tuple[str, dict[str, Any]]:
     raw_type = msg.get(CONF_DEVICE_TYPE)
     device_type = DeviceType(raw_type)
     display_name = str(msg.get(CONF_DISPLAY_NAME) or msg.get("name") or "").strip()
@@ -213,12 +320,21 @@ def _device_conf_from_msg(msg: dict[str, Any], existing: set[str]) -> tuple[str,
     conf = _build_device_conf(device_type, display_name, fields, slot_values, runtime)
     if isinstance(msg.get(CONF_WATT_BUCKETS), list):
         conf[CONF_WATT_BUCKETS] = msg[CONF_WATT_BUCKETS]
+    # wake_mac ist ein Text-Slot (keine Entity) — separat übernehmen.
+    wake_mac = slots.get(CONF_WAKE_MAC) or msg.get(CONF_WAKE_MAC)
+    if wake_mac and CONF_WAKE_MAC in fields:
+        conf[CONF_WAKE_MAC] = str(wake_mac)
     requested = str(msg.get(CONF_SLUG) or "").strip().lower()
     if requested:
         slug = requested
     else:
         slug = unique_slug(slugify(display_name) or "device", existing)
     return slug, conf
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# BULK-IMPORT + DRY-RUN-REPORT
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def _parse_bulk(raw: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
@@ -240,6 +356,97 @@ def _parse_bulk(raw: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any
         raise ValueError("\n".join(errors))
     valid_groups = groups if isinstance(groups, dict) else {}
     return valid, valid_groups
+
+
+def _import_report(
+    valid: list[dict[str, Any]], profile: str
+) -> list[dict[str, Any]]:
+    """Pro Device ein Vorschau-Eintrag (LH §5 Dry-Run)."""
+    own = _own_prefixes(profile)
+    report: list[dict[str, Any]] = []
+    for d in valid:
+        slug = str(d.get(CONF_SLUG))
+        active_fields = [k for k in (d.get(CONF_FIELDS) or []) if k in SLOT_CATALOG]
+        # Felder, die als Slot-Keys mitgegeben wurden (auch ohne CONF_FIELDS).
+        slot_keys = [k for k in ALL_SLOT_KEYS if d.get(k)]
+        unknown_slots = [
+            k for k in d
+            if k not in SLOT_CATALOG
+            and k not in (
+                CONF_SLUG, CONF_DEVICE_TYPE, CONF_DISPLAY_NAME, CONF_FIELDS,
+                CONF_WATT_THRESHOLD_ON, CONF_STICKY_HOLD_SECONDS,
+                CONF_EXPOSE_SECONDARY_SENSORS, CONF_WATT_BUCKETS,
+            )
+        ]
+        missing_entities = [
+            k for k in active_fields
+            if SLOT_CATALOG[k].kind == "entity" and not d.get(k)
+        ]
+        derived_sources = []
+        for k in slot_keys:
+            if SLOT_CATALOG[k].kind != "entity":
+                continue
+            category = classify_source_entity(str(d[k]), own_prefixes=own)
+            if category:
+                derived_sources.append(source_warning_text(category, str(d[k])))
+        report.append(
+            {
+                "slug": slug,
+                "device_type": d.get(CONF_DEVICE_TYPE),
+                "entity_id": _device_sensor_entity_id(profile, slug),
+                "slots": {k: d[k] for k in slot_keys},
+                "unknown_slots": unknown_slots,
+                "missing_entities": missing_entities,
+                "derived_sources": derived_sources,
+                "accepted": not derived_sources,
+            }
+        )
+    return report
+
+
+def _apply_bulk(
+    entry: ConfigEntry,
+    valid: list[dict[str, Any]],
+    imported_groups: dict[str, dict[str, Any]],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    devices = _devices(entry)
+    for item in valid:
+        slug = str(item.get(CONF_SLUG))
+        field_keys = [key for key in ALL_SLOT_KEYS if item.get(key)]
+        conf: dict[str, Any] = {
+            CONF_DEVICE_TYPE: item[CONF_DEVICE_TYPE],
+            CONF_DISPLAY_NAME: item.get(CONF_DISPLAY_NAME, slug),
+            CONF_FIELDS: field_keys,
+        }
+        for key in field_keys:
+            conf[key] = item[key]
+        for key in (
+            CONF_WATT_THRESHOLD_ON,
+            CONF_STICKY_HOLD_SECONDS,
+            CONF_EXPOSE_SECONDARY_SENSORS,
+            CONF_WATT_BUCKETS,
+        ):
+            if key in item:
+                conf[key] = item[key]
+        devices[slug] = conf
+    groups = {**_groups(entry), **imported_groups}
+    return devices, groups
+
+
+def _export_yaml(entry: ConfigEntry) -> str:
+    payload = {
+        CONF_DEVICES: [
+            {CONF_SLUG: slug, **conf} for slug, conf in _devices(entry).items()
+        ],
+        CONF_COMBINEDS: _combineds(entry),
+        CONF_LIGHT_GROUPS: _groups(entry),
+    }
+    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# REGISTRATION
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def async_setup_websocket_api(hass: HomeAssistant) -> None:
@@ -269,6 +476,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         vol.Optional(CONF_STICKY_HOLD_SECONDS): vol.Any(int, float, str),
         vol.Optional(CONF_EXPOSE_SECONDARY_SENSORS): bool,
         vol.Optional(CONF_WATT_BUCKETS): list,
+        vol.Optional(CONF_WAKE_MAC): str,
         **_SLOT_SCHEMA_FIELDS,
     })
     @websocket_api.require_admin
@@ -285,8 +493,11 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "invalid_device", str(err))
             return
         devices[slug] = conf
+        warnings = _source_warnings(conf, entry_profile(entry))
         await _update_options(hass, entry, {**entry.options, CONF_DEVICES: devices})
-        connection.send_result(msg["id"], {"slug": slug, "config": conf})
+        connection.send_result(
+            msg["id"], {"slug": slug, "config": conf, "warnings": warnings}
+        )
 
     @websocket_api.websocket_command({
         vol.Required("type"): WS_REMOVE_DEVICE,
@@ -302,6 +513,53 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         devices = _devices(entry)
         devices.pop(msg[CONF_SLUG], None)
         await _update_options(hass, entry, {**entry.options, CONF_DEVICES: devices})
+        connection.send_result(msg["id"], {"removed": msg[CONF_SLUG]})
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): WS_SET_COMBINED,
+        vol.Optional(CONF_SLUG): str,
+        vol.Required(CONF_DISPLAY_NAME): str,
+        vol.Required("config"): dict,
+    })
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_set_combined(hass, connection, msg) -> None:
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        display_name = str(msg.get(CONF_DISPLAY_NAME) or "").strip()
+        if not display_name:
+            connection.send_error(msg["id"], "invalid_combined", "display_name is required")
+            return
+        combineds = _combineds(entry)
+        slug = str(msg.get(CONF_SLUG) or "").strip().lower()
+        if not slug:
+            slug = unique_slug(slugify(display_name) or "combined", set(combineds))
+        conf = dict(msg["config"])
+        conf[CONF_DISPLAY_NAME] = display_name
+        combineds[slug] = conf
+        await _update_options(
+            hass, entry, {**entry.options, CONF_COMBINEDS: combineds}
+        )
+        connection.send_result(msg["id"], {"slug": slug})
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): WS_REMOVE_COMBINED,
+        vol.Required(CONF_SLUG): str,
+    })
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_remove_combined(hass, connection, msg) -> None:
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        combineds = _combineds(entry)
+        combineds.pop(msg[CONF_SLUG], None)
+        await _update_options(
+            hass, entry, {**entry.options, CONF_COMBINEDS: combineds}
+        )
         connection.send_result(msg["id"], {"removed": msg[CONF_SLUG]})
 
     @websocket_api.websocket_command({
@@ -350,6 +608,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
     @websocket_api.websocket_command({
         vol.Required("type"): WS_BULK_IMPORT,
         vol.Required("payload"): str,
+        vol.Optional("dry_run"): bool,
     })
     @websocket_api.require_admin
     @websocket_api.async_response
@@ -363,40 +622,52 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         except (TypeError, ValueError, yaml.YAMLError) as err:
             connection.send_error(msg["id"], "invalid_bulk", str(err))
             return
-        devices = _devices(entry)
-        for item in imported_devices:
-            slug = str(item.pop(CONF_SLUG))
-            field_keys = [key for key in ALL_SLOT_KEYS if item.get(key)]
-            conf = {
-                CONF_DEVICE_TYPE: item[CONF_DEVICE_TYPE],
-                CONF_DISPLAY_NAME: item.get(CONF_DISPLAY_NAME, slug),
-                CONF_FIELDS: field_keys,
-            }
-            for key in field_keys:
-                conf[key] = item[key]
-            for key in (
-                CONF_WATT_THRESHOLD_ON,
-                CONF_STICKY_HOLD_SECONDS,
-                CONF_EXPOSE_SECONDARY_SENSORS,
-                CONF_WATT_BUCKETS,
-            ):
-                if key in item:
-                    conf[key] = item[key]
-            devices[slug] = conf
-        groups = {**_groups(entry), **imported_groups}
+        profile = entry_profile(entry)
+        report = _import_report(imported_devices, profile)
+        if msg.get("dry_run"):
+            connection.send_result(
+                msg["id"],
+                {
+                    "dry_run": True,
+                    "devices": len(imported_devices),
+                    "groups": len(imported_groups),
+                    "report": report,
+                },
+            )
+            return
+        devices, groups = _apply_bulk(entry, imported_devices, imported_groups)
         await _update_options(
             hass,
             entry,
             {**entry.options, CONF_DEVICES: devices, CONF_LIGHT_GROUPS: groups},
         )
         connection.send_result(
-            msg["id"], {"devices": len(imported_devices), "groups": len(imported_groups)}
+            msg["id"],
+            {
+                "dry_run": False,
+                "devices": len(imported_devices),
+                "groups": len(imported_groups),
+                "report": report,
+            },
         )
+
+    @websocket_api.websocket_command({vol.Required("type"): WS_EXPORT_CONFIG})
+    @websocket_api.require_admin
+    @websocket_api.async_response
+    async def ws_export_config(hass, connection, msg) -> None:
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        connection.send_result(msg["id"], {"yaml": _export_yaml(entry)})
 
     websocket_api.async_register_command(hass, ws_get_status)
     websocket_api.async_register_command(hass, ws_get_catalog)
     websocket_api.async_register_command(hass, ws_set_device)
     websocket_api.async_register_command(hass, ws_remove_device)
+    websocket_api.async_register_command(hass, ws_set_combined)
+    websocket_api.async_register_command(hass, ws_remove_combined)
     websocket_api.async_register_command(hass, ws_set_group)
     websocket_api.async_register_command(hass, ws_remove_group)
     websocket_api.async_register_command(hass, ws_bulk_import)
+    websocket_api.async_register_command(hass, ws_export_config)

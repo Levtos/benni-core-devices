@@ -1,24 +1,31 @@
 import { CSS, chip, esc } from "./styles.js";
 import { Store } from "./store.js";
-import * as overview from "./views/overview.js";
+import * as diagnose from "./views/diagnose.js";
 import * as builder from "./views/builder.js";
-import * as groups from "./views/groups.js";
+import * as combined from "./views/combined.js";
+import * as importExport from "./views/import_export.js";
 
 const NAV = [
-  { id: "overview", label: "Status", icon: "mdi:devices", view: overview },
-  { id: "builder", label: "Device-Builder", icon: "mdi:plus-box", view: builder },
-  { id: "groups", label: "Groups & Import", icon: "mdi:lightbulb-group", view: groups },
+  { id: "diagnose", label: "Diagnose", icon: "mdi:stethoscope", view: diagnose },
+  { id: "builder", label: "Atomic Builder", icon: "mdi:cube-outline", view: builder },
+  { id: "combined", label: "Combined Builder", icon: "mdi:set-merge", view: combined },
+  { id: "import_export", label: "Import / Export", icon: "mdi:swap-vertical", view: importExport },
 ];
+
+// Views, die einen Form-Draft halten und nicht bei jedem Live-Refresh
+// neu gerendert werden sollen.
+const DRAFT_VIEWS = new Set(["builder", "combined", "import_export"]);
 
 class BcdApp extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: "open" });
     this._store = new Store();
-    this._view = "overview";
+    this._view = "diagnose";
     this._booted = false;
     this._hass = null;
     this._poll = null;
+    this._lastRefresh = null;
   }
 
   set hass(value) {
@@ -47,6 +54,7 @@ class BcdApp extends HTMLElement {
 
   async refresh() {
     await this._store.refresh().catch(() => {});
+    this._lastRefresh = new Date();
     this._renderLive();
   }
 
@@ -56,8 +64,16 @@ class BcdApp extends HTMLElement {
       store: this._store,
       refresh: () => this.refresh(),
       rerender: () => this._renderView(),
+      navigate: (id) => this._navigate(id),
       toast: (msg) => this._toast(msg),
     };
+  }
+
+  _navigate(id) {
+    this._view = id;
+    this.shadowRoot.querySelectorAll(".nav button").forEach((b) =>
+      b.classList.toggle("active", b.dataset.id === this._view));
+    this._renderView();
   }
 
   _renderShell() {
@@ -70,27 +86,25 @@ class BcdApp extends HTMLElement {
       <div class="app">
         <aside class="sidebar">
           <div class="brand">
-            <div class="logo"><ha-icon icon="mdi:devices"></ha-icon></div>
-            <div><b>Benni Core Devices</b><small>Atomic device sensors</small></div>
+            <div class="logo"><ha-icon icon="mdi:atom"></ha-icon></div>
+            <div><b>Benni Core Devices</b><small>Atomic device &amp; combined logic</small></div>
           </div>
           <nav class="nav">${nav}</nav>
           <div class="sb-foot" id="foot">benni_core_devices</div>
         </aside>
         <main class="main">
           <div class="head">
-            <h1 id="title">Status</h1>
+            <div>
+              <h1 id="title">Diagnose</h1>
+              <div class="sub" id="subtitle"></div>
+            </div>
             <div class="chips" id="chips"></div>
           </div>
           <div id="content"></div>
         </main>
       </div>`;
     this.shadowRoot.querySelectorAll(".nav button").forEach((button) =>
-      button.addEventListener("click", () => {
-        this._view = button.dataset.id;
-        this.shadowRoot.querySelectorAll(".nav button").forEach((b) =>
-          b.classList.toggle("active", b.dataset.id === this._view));
-        this._renderView();
-      }));
+      button.addEventListener("click", () => this._navigate(button.dataset.id)));
   }
 
   _renderLive() {
@@ -98,19 +112,35 @@ class BcdApp extends HTMLElement {
     const chips = this.shadowRoot.getElementById("chips");
     if (chips) {
       if (status._error) {
-        chips.innerHTML = chip("warn", "WS error");
+        chips.innerHTML = chip("err", "WS error");
       } else {
+        const devices = status.devices || [];
+        const combineds = status.combineds || [];
+        const missing = devices.reduce(
+          (n, d) => n + ((d.attrs && d.attrs.missing_sources) || []).length, 0);
+        const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
+        const ready = devices.filter(
+          (d) => d.attrs && d.attrs.atomic_quality === "ok").length;
         chips.innerHTML = [
-          chip("info", `Route: ${status.profile_label || status.profile || "loading"}`),
-          chip((status.devices || []).length ? "ok" : "warn", `Devices ${(status.devices || []).length}`),
-          chip("info", `Groups ${(status.groups || []).length}`),
+          chip("accent", `Route: ${status.profile_label || status.profile || "?"}`),
+          chip(devices.length ? "info" : "warn", `Devices ${devices.length}`),
+          chip("info", `Combined ${combineds.length}`),
+          missing ? chip("warn", `Missing ${missing}`) : "",
+          degraded ? chip("warn", `Degraded ${degraded}`) : "",
+          chip("ok", `Ready ${ready}`),
         ].join("");
       }
+    }
+    const subtitle = this.shadowRoot.getElementById("subtitle");
+    if (subtitle) {
+      subtitle.textContent = this._lastRefresh
+        ? `Letzte Aktualisierung: ${this._lastRefresh.toLocaleTimeString()}`
+        : "";
     }
     const foot = this.shadowRoot.getElementById("foot");
     if (foot && status.profile) foot.textContent = `benni_core_devices · ${status.profile}`;
     const content = this.shadowRoot.getElementById("content");
-    if (["builder", "groups"].includes(this._view) && content?.dataset.keepDraft === "true") {
+    if (DRAFT_VIEWS.has(this._view) && content?.dataset.keepDraft === "true") {
       return;
     }
     this._renderView();
@@ -121,7 +151,8 @@ class BcdApp extends HTMLElement {
     const title = this.shadowRoot.getElementById("title");
     const content = this.shadowRoot.getElementById("content");
     if (!content) return;
-    title.textContent = item.label;
+    content.dataset.keepDraft = "false";
+    if (title) title.textContent = item.label;
     try {
       item.view.render(content, this._ctx());
     } catch (err) {

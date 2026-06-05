@@ -26,11 +26,15 @@ def _load(modname: str, filename: str):
     return mod
 
 
-# Reihenfolge wichtig: const → device_types → logic (logic importiert const).
+# Reihenfolge wichtig: const → device_types → logic → attributes/combined.
 const = _load("const", "const.py")
 device_types = _load("device_types", "device_types.py")
 logic = _load("logic", "logic.py")
+attributes = _load("attributes", "attributes.py")
+combined = _load("combined", "combined.py")
 
 sys.modules["bcd_const"] = const
 sys.modules["bcd_device_types"] = device_types
 sys.modules["bcd_logic"] = logic
+sys.modules["bcd_attributes"] = attributes
+sys.modules["bcd_combined"] = combined

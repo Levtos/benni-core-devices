@@ -7,16 +7,25 @@ Nur aktiv wenn `expose_secondary_sensors=true`:
 
 from __future__ import annotations
 
-from homeassistant.components.binary_sensor import BinarySensorEntity
+from homeassistant.components.binary_sensor import (
+    BinarySensorDeviceClass,
+    BinarySensorEntity,
+)
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import device_object_id_prefix, unique_id
-from .coordinator import DeviceCoordinator, coordinators_for_entry
+from .const import combined_object_id_prefix, device_object_id_prefix, unique_id
+from .coordinator import (
+    CombinedCoordinator,
+    DeviceCoordinator,
+    combined_coordinators_for_entry,
+    coordinators_for_entry,
+)
 from .logic import DeviceResult
 
 
@@ -35,6 +44,10 @@ async def async_get_entities(
             continue
         out.append(PoweredBinarySensor(coordinator, entry))
         out.append(AvailableBinarySensor(coordinator, entry))
+    # Abgeleitete Gate-/Policy-Binary-Sensoren aus Combineds (v0).
+    for coordinator in combined_coordinators_for_entry(hass, entry).values():
+        for derived in coordinator.config.derived:
+            out.append(CombinedDerivedBinarySensor(coordinator, entry, derived))
     return out
 
 
@@ -106,3 +119,44 @@ class AvailableBinarySensor(_BaseDeviceBinarySensor):
     def is_on(self) -> bool | None:
         r = self._result
         return r.available if r else None
+
+
+class CombinedDerivedBinarySensor(
+    CoordinatorEntity[CombinedCoordinator], BinarySensorEntity
+):
+    """Abgeleiteter Gate-/Policy-Binary-Sensor eines Combined (v0).
+
+    Diese sind bewusst KEINE Raw-Quellen — sie sind Policy-Ausgaben und tragen
+    daher das `_combined_`-Präfix.
+    """
+
+    _attr_has_entity_name = False
+    _attr_should_poll = False
+
+    def __init__(
+        self, coordinator: CombinedCoordinator, entry: ConfigEntry, derived
+    ) -> None:
+        super().__init__(coordinator)
+        from . import COMBINED_HUB_IDENTIFIER
+
+        self._derived = derived
+        self._attr_unique_id = unique_id(
+            entry.entry_id, f"combined_{coordinator.slug}_{derived.slug}"
+        )
+        self._attr_name = derived.name
+        self._attr_device_info = DeviceInfo(identifiers={COMBINED_HUB_IDENTIFIER})
+        if derived.device_class:
+            try:
+                self._attr_device_class = BinarySensorDeviceClass(derived.device_class)
+            except ValueError:
+                self._attr_device_class = None
+        self.entity_id = async_generate_entity_id(
+            "binary_sensor.{}",
+            f"{combined_object_id_prefix(coordinator.profile_name)}"
+            f"{coordinator.slug}_{derived.slug}",
+            hass=coordinator.hass,
+        )
+
+    @property
+    def is_on(self) -> bool | None:
+        return self.coordinator.derived_state(self._derived)

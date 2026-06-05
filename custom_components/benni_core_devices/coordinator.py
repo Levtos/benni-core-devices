@@ -31,13 +31,16 @@ from .const import (
     CONF_DEVICE_TYPE,
     CONF_DISPLAY_NAME,
     CONF_EXPOSE_SECONDARY_SENSORS,
+    CONF_FIELDS,
     CONF_SLUG,
     CONF_STICKY_HOLD_SECONDS,
+    CONF_WAKE_MAC,
     CONF_WATT_BUCKETS,
     CONF_WATT_THRESHOLD_ON,
     DEFAULT_EXPOSE_SECONDARY_SENSORS,
     DEFAULT_STICKY_HOLD_SECONDS,
     DEFAULT_WATT_THRESHOLD_ON,
+    DATA_COMBINEDS,
     DATA_COORDINATORS,
     DOMAIN,
     STORAGE_KEY_LAST_POWERED,
@@ -52,7 +55,8 @@ from .const import (
     entry_profile,
     storage_key,
 )
-from .device_types import ALL_SLOT_KEYS, DeviceTypeProfile, profile_for
+from .attributes import build_main_attributes
+from .device_types import ENTITY_SLOT_KEYS, DeviceTypeProfile, profile_for
 from .logic import (
     DeviceConfig,
     DeviceInputs,
@@ -94,6 +98,9 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         self._unsub_listeners: list[CALLBACK_TYPE] = []
         self._boot_start: datetime = dt_util.now()
         self._profile: DeviceTypeProfile = profile_for(self.device_type)
+        # Letzter Inputs-Snapshot, damit der Sensor-Layer reiche Attribute
+        # (Slot-Diagnose, Media, Measurements) ohne Re-Read bauen kann.
+        self._last_inputs: DeviceInputs | None = None
 
     # ─────────────────────────────────────────────────────── Config Access
 
@@ -130,13 +137,31 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
 
     @property
     def configured_slot_entities(self) -> dict[str, str]:
-        """Slot-Key → Entity-ID, nur tatsächlich konfigurierte (aus conf)."""
+        """Slot-Key → Entity-ID, nur tatsächlich konfigurierte Entity-Slots.
+
+        Text-Slots (z. B. ``wake_mac``) sind hier bewusst ausgenommen — sie
+        sind keine HA-Entities und dürfen nicht als State gelesen werden.
+        """
         out: dict[str, str] = {}
-        for key in ALL_SLOT_KEYS:
+        for key in ENTITY_SLOT_KEYS:
             eid = self._conf.get(key)
             if eid:
                 out[key] = str(eid)
         return out
+
+    @property
+    def fields(self) -> tuple[str, ...]:
+        """Aktivierte Felder (auch leere) — für missing_sources-Diagnose."""
+        raw = self._conf.get(CONF_FIELDS)
+        if isinstance(raw, (list, tuple)):
+            return tuple(str(k) for k in raw)
+        # Fallback: aus den belegten Entity-Slots ableiten.
+        return tuple(self.configured_slot_entities.keys())
+
+    @property
+    def wake_mac(self) -> str | None:
+        value = self._conf.get(CONF_WAKE_MAC)
+        return str(value) if value else None
 
     @property
     def watt_slot_key(self) -> str | None:
@@ -258,6 +283,7 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         await self._async_save()
 
     def _build_config(self) -> DeviceConfig:
+        slot_entities = self.configured_slot_entities
         return DeviceConfig(
             slug=self.slug,
             display_name=self.display_name,
@@ -266,7 +292,23 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             watt_buckets=logic.parse_watt_buckets(self._c(CONF_WATT_BUCKETS)),
             sticky_hold_seconds=self.sticky_hold_seconds,
             area_id=self._derive_area_id(),
-            configured_slots=tuple(self.configured_slot_entities.keys()),
+            configured_slots=tuple(slot_entities.keys()),
+            slot_entities=slot_entities,
+            fields=self.fields,
+            wake_mac=self.wake_mac,
+        )
+
+    @property
+    def main_attributes(self) -> dict[str, Any]:
+        """Vollständiges Attribut-Dict des Haupt-Sensors (Rich-Atomic-Layer).
+
+        Eine Quelle der Wahrheit für sensor.py UND die WebSocket-API.
+        """
+        result = self.data
+        if result is None or self._last_inputs is None:
+            return {}
+        return build_main_attributes(
+            self._profile, self._build_config(), self._last_inputs, result
         )
 
     def _derive_area_id(self) -> str | None:
@@ -297,13 +339,15 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         slots: dict[str, SlotReading] = {}
         for slot_key, entity_id in self.configured_slot_entities.items():
             slots[slot_key] = self._read_slot(entity_id)
-        return DeviceInputs(
+        inputs = DeviceInputs(
             slots=slots,
             integration_slot=self._profile.integration_slot,
             state_slot=self._profile.state_slot,
             watt_slot=self.watt_slot_key,
             boot_phase_active=logic.is_boot_phase(self._boot_start, now),
         )
+        self._last_inputs = inputs
+        return inputs
 
     def _read_slot(self, entity_id: str) -> SlotReading:
         state = self.hass.states.get(entity_id)
@@ -323,8 +367,141 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# Combined-Atomic-Coordinator (v0)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CombinedCoordinator(DataUpdateCoordinator):
+    """Treibt einen Combined-Atomic-Sensor (First-Match-Wins, v0)."""
+
+    def __init__(
+        self, hass: HomeAssistant, entry: ConfigEntry, slug: str, raw_conf: dict
+    ) -> None:
+        super().__init__(
+            hass,
+            _LOGGER,
+            name=f"{DOMAIN}_{entry.entry_id}_combined_{slug}",
+            update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
+        )
+        from .combined import CombinedConfig, parse_combined
+
+        self.entry = entry
+        self._slug = slug
+        self._profile_name = entry_profile(entry)
+        self._config = parse_combined(slug, raw_conf) or CombinedConfig(
+            slug=slug, display_name=slug
+        )
+        self._unsub_listeners: list[CALLBACK_TYPE] = []
+        self._last_readings: dict[str, Any] = {}
+
+    @property
+    def slug(self) -> str:
+        return self._slug
+
+    @property
+    def profile_name(self) -> str:
+        return self._profile_name
+
+    @property
+    def config(self):
+        return self._config
+
+    @property
+    def source_entities(self) -> list[str]:
+        return [s.entity for s in self._config.sources if s.entity]
+
+    def _read(self) -> dict[str, Any]:
+        from .combined import SourceReading
+
+        readings: dict[str, Any] = {}
+        for src in self._config.sources:
+            if not src.entity:
+                continue
+            state = self.hass.states.get(src.entity)
+            if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, ""):
+                readings[src.key] = SourceReading(value=None, available=False)
+                continue
+            numeric: float | None
+            try:
+                numeric = float(state.state)
+            except (TypeError, ValueError):
+                numeric = None
+            readings[src.key] = SourceReading(
+                value=state.state, numeric=numeric, available=True
+            )
+        return readings
+
+    def _compute(self):
+        from .combined import evaluate_combined
+
+        self._last_readings = self._read()
+        return evaluate_combined(self._config, self._last_readings)
+
+    async def _async_update_data(self):
+        return self._compute()
+
+    def async_start_listeners(self) -> None:
+        watched = self.source_entities
+        if watched:
+            self._unsub_listeners.append(
+                async_track_state_change_event(
+                    self.hass, watched, self._async_on_source_change
+                )
+            )
+
+    def async_stop_listeners(self) -> None:
+        for unsub in self._unsub_listeners:
+            unsub()
+        self._unsub_listeners.clear()
+
+    @callback
+    def _async_on_source_change(self, _event: Event) -> None:
+        self.async_set_updated_data(self._compute())
+
+    def derived_state(self, derived) -> bool | None:
+        from .combined import evaluate_derived
+
+        result = self.data
+        if result is None:
+            return None
+        return evaluate_derived(derived, self._config, self._last_readings, result)
+
+    @property
+    def attributes(self) -> dict[str, Any]:
+        result = self.data
+        if result is None:
+            return {}
+        return {
+            "slug": self._slug,
+            "display_name": self._config.display_name,
+            "output_type": self._config.output_type,
+            "output": result.output,
+            "reason": result.reason,
+            "code_legend": dict(self._config.code_legend),
+            "source_entities": result.source_entities,
+            "source_states": result.source_states,
+            "source_available": result.source_available,
+            "missing_sources": result.missing_sources,
+            "degraded": result.degraded,
+            "degraded_reason": result.degraded_reason,
+        }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # Lookup-Helper
 # ─────────────────────────────────────────────────────────────────────────────
+
+
+@callback
+def combined_coordinators_for_entry(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> dict[str, "CombinedCoordinator"]:
+    """Alle Combined-Coordinators (slug → coord) des Hub-Entries."""
+    bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not bucket:
+        return {}
+    coords = bucket.get(DATA_COMBINEDS)
+    return coords if isinstance(coords, dict) else {}
 
 
 @callback

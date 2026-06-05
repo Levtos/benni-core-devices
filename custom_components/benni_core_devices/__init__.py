@@ -12,16 +12,19 @@ from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers import entity_registry as er
 
 from .const import (
+    CONF_COMBINEDS,
     CONF_DEVICES,
+    DATA_COMBINEDS,
     DATA_COORDINATORS,
     DATA_WS_REGISTERED,
     DOMAIN,
     NAME,
+    combined_object_id_prefix,
     device_object_id_prefix,
     entry_profile,
     group_object_id_prefix,
 )
-from .coordinator import DeviceCoordinator
+from .coordinator import CombinedCoordinator, DeviceCoordinator
 from .services import async_register_services
 from .view import async_setup_view
 from .websocket_api import async_setup_websocket_api
@@ -32,10 +35,16 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 
 HUB_IDENTIFIER = (DOMAIN, "hub")
 GROUPS_HUB_IDENTIFIER = (DOMAIN, "groups_hub")
+COMBINED_HUB_IDENTIFIER = (DOMAIN, "combined_hub")
 
 
 def _devices_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
     raw = entry.options.get(CONF_DEVICES)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _combineds_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
+    raw = entry.options.get(CONF_COMBINEDS)
     return dict(raw) if isinstance(raw, dict) else {}
 
 
@@ -47,7 +56,7 @@ def _reconcile_devices(
     hass: HomeAssistant, entry: ConfigEntry, devices_conf: dict[str, dict[str, Any]]
 ) -> None:
     dev_reg = dr.async_get(hass)
-    valid = {HUB_IDENTIFIER, GROUPS_HUB_IDENTIFIER} | {
+    valid = {HUB_IDENTIFIER, GROUPS_HUB_IDENTIFIER, COMBINED_HUB_IDENTIFIER} | {
         _device_identifier(slug) for slug in devices_conf
     }
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
@@ -58,6 +67,7 @@ def _reconcile_devices(
     valid_prefixes = (
         device_object_id_prefix(profile),
         group_object_id_prefix(profile),
+        combined_object_id_prefix(profile),
     )
     ent_reg = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
@@ -85,6 +95,14 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         model="Light Groups Hub",
         entry_type=dr.DeviceEntryType.SERVICE,
     )
+    dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={COMBINED_HUB_IDENTIFIER},
+        name=f"{NAME} ({profile}) Combineds",
+        manufacturer="Benni Core",
+        model="Combined Atomics Hub",
+        entry_type=dr.DeviceEntryType.SERVICE,
+    )
 
     devices_conf = _devices_conf(entry)
     _reconcile_devices(hass, entry, devices_conf)
@@ -97,12 +115,24 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinator.async_start_listeners()
         coordinators[slug] = coordinator
 
+    combineds: dict[str, CombinedCoordinator] = {}
+    for slug, conf in _combineds_conf(entry).items():
+        combined = CombinedCoordinator(hass, entry, slug, conf)
+        await combined.async_config_entry_first_refresh()
+        combined.async_start_listeners()
+        combineds[slug] = combined
+
     data = hass.data.setdefault(DOMAIN, {})
-    data[entry.entry_id] = {DATA_COORDINATORS: coordinators}
+    data[entry.entry_id] = {
+        DATA_COORDINATORS: coordinators,
+        DATA_COMBINEDS: combineds,
+    }
 
     def _stop_all() -> None:
         for coordinator in coordinators.values():
             coordinator.async_stop_listeners()
+        for combined in combineds.values():
+            combined.async_stop_listeners()
 
     entry.async_on_unload(_stop_all)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -127,6 +157,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 for coordinator in coords.values():
                     if isinstance(coordinator, DeviceCoordinator):
                         coordinator.async_stop_listeners()
+            combineds = bucket.get(DATA_COMBINEDS)
+            if isinstance(combineds, dict):
+                for combined in combineds.values():
+                    if isinstance(combined, CombinedCoordinator):
+                        combined.async_stop_listeners()
     return unloaded
 
 

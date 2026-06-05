@@ -33,12 +33,18 @@ from .const import (
     CONF_LIGHT_GROUPS,
     DOMAIN,
     POWER_STATE_SLUGS,
+    combined_object_id_prefix,
     device_object_id_prefix,
     group_object_id_prefix,
     entry_profile,
     unique_id,
 )
-from .coordinator import DeviceCoordinator, coordinators_for_entry
+from .coordinator import (
+    CombinedCoordinator,
+    DeviceCoordinator,
+    combined_coordinators_for_entry,
+    coordinators_for_entry,
+)
 from .logic import DeviceResult
 
 
@@ -73,6 +79,9 @@ async def async_get_entities(
             out.append(PowerStateSensor(coordinator, entry))
             if coordinator.watt_slot_key:
                 out.append(WattSensor(coordinator, entry))
+    # Combined-Atomics (First-Match-Wins) — ein Sensor je Combined.
+    for coordinator in combined_coordinators_for_entry(hass, entry).values():
+        out.append(CombinedAtomicSensor(coordinator, entry))
     # Atomic Light Groups (Mengen von Lampen) — ein Sensor je Gruppe.
     groups = entry.options.get(CONF_LIGHT_GROUPS)
     if isinstance(groups, dict):
@@ -144,39 +153,9 @@ class DeviceMainSensor(_BaseDeviceSensor):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        r = self._result
-        if r is None:
-            return {}
-        c = self.coordinator
-        attrs: dict[str, Any] = {
-            "device_type": c.device_type.value,
-            "slug": c.slug,
-            "display_name": c.display_name,
-            "powered": r.powered,
-            "power_state": r.power_state,
-            "available": r.available,
-            "power_source": r.power_source,
-            "last_powered_change": r.last_powered_change,
-            "override_active": r.override_active,
-            "watt_disagrees": r.watt_disagrees,
-            "area_id": c._derive_area_id(),
-        }
-        # Typspezifische Extra-Attribute (LH §6)
-        from .device_types import profile_for
-
-        profile = profile_for(c.device_type)
-        for key in profile.extra_attributes:
-            if key == "watt":
-                attrs[key] = r.watt
-            elif key in ("media_player_state", "hvac_mode"):
-                # State des state_slots (media_player-State bzw. climate hvac_mode)
-                attrs[key] = r.raw_state if profile.state_slot else None
-            elif key == "target_temperature":
-                # HA-climate trägt den Sollwert im Attribut "temperature"
-                attrs[key] = r.extra.get("temperature")
-            else:
-                attrs[key] = r.extra.get(key)
-        return attrs
+        # Rich-Atomic-Attribut-Layer: eine Quelle der Wahrheit im Coordinator
+        # (Standard-Attribute + generische Slot-Diagnose + reiche Typ-Attribute).
+        return self.coordinator.main_attributes
 
 
 class PowerStateSensor(_BaseDeviceSensor):
@@ -269,6 +248,40 @@ class LightGroupSensor(SensorEntity):
             "on_count": len(on),
             "any_on": bool(on),
         }
+
+
+class CombinedAtomicSensor(CoordinatorEntity[CombinedCoordinator], SensorEntity):
+    """Combined-Atomic-Sensor (First-Match-Wins, v0).
+
+    State = der gecoerzte Output (`sensor.<profile>_combined_<slug>`). Attribute
+    spiegeln Quellen, Reason, Code-Legende und Degraded-Diagnose wider.
+    """
+
+    _attr_has_entity_name = False
+    _attr_should_poll = False
+    _attr_icon = "mdi:set-merge"
+
+    def __init__(self, coordinator: CombinedCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        from . import COMBINED_HUB_IDENTIFIER
+
+        self._attr_unique_id = unique_id(entry.entry_id, f"combined_{coordinator.slug}")
+        self._attr_name = coordinator.config.display_name
+        self._attr_device_info = DeviceInfo(identifiers={COMBINED_HUB_IDENTIFIER})
+        self.entity_id = async_generate_entity_id(
+            "sensor.{}",
+            f"{combined_object_id_prefix(coordinator.profile_name)}{coordinator.slug}",
+            hass=coordinator.hass,
+        )
+
+    @property
+    def native_value(self) -> str | None:
+        r = self.coordinator.data
+        return r.state if r else None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        return self.coordinator.attributes
 
 
 class WattSensor(_BaseDeviceSensor):

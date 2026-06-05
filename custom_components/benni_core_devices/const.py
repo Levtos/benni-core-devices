@@ -16,6 +16,7 @@ STORAGE_VERSION: Final[int] = 1
 
 # hass.data flags / entry buckets
 DATA_COORDINATORS: Final = "coordinators"
+DATA_COMBINEDS: Final = "combined_coordinators"
 DATA_WS_REGISTERED: Final = "_ws_registered"
 DATA_VIEW_STATIC: Final = "_view_static_registered"
 DATA_VIEW_PANEL: Final = "_view_panel_registered"
@@ -62,6 +63,19 @@ CONF_POSITION_ENTITY: Final[str] = "position_entity"
 CONF_CLIMATE_ENTITY: Final[str] = "climate_entity"
 CONF_VALUE_ENTITY: Final[str] = "value_entity"
 
+# Rich-Atomic-Rework: zusätzliche Roh-Mess- und Capability-Slots. Alle additiv
+# und optional — bestehende Geräte ohne diese Keys bleiben unverändert gültig.
+CONF_CURRENT_SENSOR: Final[str] = "current_sensor"
+CONF_VOLTAGE_SENSOR: Final[str] = "voltage_sensor"
+CONF_ENERGY_SENSOR: Final[str] = "energy_sensor"
+CONF_NETWORK_SWITCH_ENTITY: Final[str] = "network_switch_entity"
+CONF_WAKE_BUTTON_ENTITY: Final[str] = "wake_button_entity"
+CONF_REMOTE_ENTITY: Final[str] = "remote_entity"
+CONF_COMPANION_MEDIA_PLAYER: Final[str] = "companion_media_player"
+CONF_COMPANION_TRACKER: Final[str] = "companion_tracker"
+# Text-Feld (kein Entity-Slot): MAC für Wake-on-LAN.
+CONF_WAKE_MAC: Final[str] = "wake_mac"
+
 CONF_WATT_THRESHOLD_ON: Final[str] = "watt_threshold_on"
 CONF_WATT_BUCKETS: Final[str] = "watt_buckets"
 CONF_STICKY_HOLD_SECONDS: Final[str] = "sticky_hold_seconds"
@@ -71,6 +85,59 @@ CONF_DEVICES: Final[str] = "devices"
 CONF_LIGHT_GROUPS: Final[str] = "light_groups"
 CONF_GROUP_MEMBERS: Final[str] = "members"
 CONF_FIELDS: Final[str] = "fields"
+
+# Combined Builder v0 — eigene Options-Sektion, additiv neben devices/groups.
+CONF_COMBINEDS: Final[str] = "combineds"
+CONF_OUTPUT_TYPE: Final[str] = "output_type"
+CONF_SOURCES: Final[str] = "sources"
+CONF_RULES: Final[str] = "rules"
+CONF_DEFAULT_OUTPUT: Final[str] = "default_output"
+CONF_DEFAULT_REASON: Final[str] = "default_reason"
+CONF_CODE_LEGEND: Final[str] = "code_legend"
+CONF_DERIVED: Final[str] = "derived"
+CONF_ROLE: Final[str] = "role"
+CONF_ENTITY: Final[str] = "entity"
+
+# Combined Output-Typen.
+OUTPUT_TYPE_ENUM: Final[str] = "enum"
+OUTPUT_TYPE_CODE: Final[str] = "code"
+OUTPUT_TYPE_BOOLEAN: Final[str] = "boolean"
+OUTPUT_TYPE_NUMBER: Final[str] = "number"
+OUTPUT_TYPE_CHOICES: Final[tuple[str, ...]] = (
+    OUTPUT_TYPE_ENUM,
+    OUTPUT_TYPE_CODE,
+    OUTPUT_TYPE_BOOLEAN,
+    OUTPUT_TYPE_NUMBER,
+)
+
+# Combined Bedingungs-Operatoren (v0, überschaubar).
+COMBINED_OP_EQ: Final[str] = "eq"
+COMBINED_OP_NE: Final[str] = "ne"
+COMBINED_OP_UNAVAILABLE: Final[str] = "unavailable"
+COMBINED_OP_LT: Final[str] = "lt"
+COMBINED_OP_LE: Final[str] = "le"
+COMBINED_OP_GT: Final[str] = "gt"
+COMBINED_OP_GE: Final[str] = "ge"
+COMBINED_OPERATOR_CHOICES: Final[tuple[str, ...]] = (
+    COMBINED_OP_EQ,
+    COMBINED_OP_NE,
+    COMBINED_OP_UNAVAILABLE,
+    COMBINED_OP_LT,
+    COMBINED_OP_LE,
+    COMBINED_OP_GT,
+    COMBINED_OP_GE,
+)
+
+# Beispielrollen für Combined-Quellen (frei erweiterbar, nur UX-Vorauswahl).
+COMBINED_ROLE_CHOICES: Final[tuple[str, ...]] = (
+    "open_contact",
+    "tilt_contact",
+    "media_state",
+    "temperature",
+    "humidity",
+    "power_state",
+    "custom",
+)
 
 CONF_WATT_OFF_OP: Final[str] = "watt_off_op"
 CONF_WATT_OFF_VALUE: Final[str] = "watt_off_value"
@@ -134,6 +201,11 @@ def group_object_id_prefix(profile: str) -> str:
     return f"{profile}_light_group_"
 
 
+def combined_object_id_prefix(profile: str) -> str:
+    """Object-id prefix for combined-atomic sensors."""
+    return f"{profile}_combined_"
+
+
 def entry_profile(entry) -> str:
     """Return the stored profile for a config entry."""
     profile = entry.data.get(CONF_PROFILE, DEFAULT_PROFILE)
@@ -165,4 +237,7 @@ WS_REMOVE_DEVICE = f"{DOMAIN}/remove_device"
 WS_SET_GROUP = f"{DOMAIN}/set_group"
 WS_REMOVE_GROUP = f"{DOMAIN}/remove_group"
 WS_BULK_IMPORT = f"{DOMAIN}/bulk_import"
+WS_SET_COMBINED = f"{DOMAIN}/set_combined"
+WS_REMOVE_COMBINED = f"{DOMAIN}/remove_combined"
+WS_EXPORT_CONFIG = f"{DOMAIN}/export_config"
 

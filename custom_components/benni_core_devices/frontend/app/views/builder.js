@@ -6,6 +6,57 @@ const WATT_ROWS = [
   ["playing", "watt_playing"],
 ];
 
+function firstType(catalog) {
+  return (catalog.device_types && catalog.device_types[0] && catalog.device_types[0].value) || "tv";
+}
+
+function defaultFields(catalog, type) {
+  const found = (catalog.device_types || []).find((item) => item.value === type);
+  return [...((found && found.default_fields) || [])];
+}
+
+function newDraft(catalog) {
+  const type = firstType(catalog);
+  return {
+    slug: "",
+    display_name: "",
+    device_type: type,
+    fields: defaultFields(catalog, type),
+    slots: {},
+    watt_threshold_on: catalog.defaults?.watt_threshold_on ?? 5,
+    sticky_hold_seconds: catalog.defaults?.sticky_hold_seconds ?? 30,
+    expose_secondary_sensors: false,
+    watt_buckets: [],
+  };
+}
+
+function draftFromDevice(catalog, device) {
+  if (!device) return newDraft(catalog);
+  const conf = device.config || {};
+  const fields = [...(conf.fields || defaultFields(catalog, conf.device_type || firstType(catalog)))];
+  const slots = {};
+  for (const key of fields) {
+    slots[key] = conf[key] || "";
+  }
+  return {
+    slug: device.slug || "",
+    display_name: conf.display_name || "",
+    device_type: conf.device_type || firstType(catalog),
+    fields,
+    slots,
+    watt_threshold_on: conf.watt_threshold_on ?? catalog.defaults?.watt_threshold_on ?? 5,
+    sticky_hold_seconds: conf.sticky_hold_seconds ?? catalog.defaults?.sticky_hold_seconds ?? 30,
+    expose_secondary_sensors: Boolean(conf.expose_secondary_sensors),
+    watt_buckets: [...(conf.watt_buckets || [])],
+  };
+}
+
+function bucketValue(draft, state, key) {
+  const bucket = (draft.watt_buckets || []).find((item) => item.state === state);
+  if (!bucket) return "";
+  return key === "op" ? (bucket.op || "<=") : (bucket.value ?? "");
+}
+
 function entityOptions(hass, domains) {
   const set = new Set(domains || []);
   return Object.keys((hass && hass.states) || {})
@@ -15,48 +66,91 @@ function entityOptions(hass, domains) {
     .join("");
 }
 
-function selectedFields(catalog, type) {
-  const found = (catalog.device_types || []).find((item) => item.value === type);
-  return new Set((found && found.default_fields) || []);
+function syncDraftFromForm(root) {
+  const form = root.querySelector("#deviceForm");
+  const draft = root._draft;
+  if (!form || !draft) return;
+  draft.display_name = form.elements.display_name.value;
+  draft.device_type = form.elements.device_type.value;
+  draft.fields = [...form.querySelectorAll('input[name="field"]:checked')].map((input) => input.value);
+  draft.watt_threshold_on = Number(form.elements.watt_threshold_on.value || 5);
+  draft.sticky_hold_seconds = Number(form.elements.sticky_hold_seconds.value || 30);
+  draft.expose_secondary_sensors = form.elements.expose_secondary_sensors.value === "true";
+  draft.watt_buckets = WATT_ROWS
+    .map(([state, prefix]) => ({
+      state,
+      op: form.elements[`${prefix}_op`].value,
+      value: form.elements[`${prefix}_value`].value,
+    }))
+    .filter((item) => item.value !== "")
+    .map((item) => ({ state: item.state, op: item.op, value: Number(item.value) }));
 }
 
-function bucketValue(device, state, key) {
-  const bucket = ((device && device.config && device.config.watt_buckets) || [])
-    .find((item) => item.state === state);
-  if (!bucket) return "";
-  return key === "op" ? (bucket.op || "<=") : (bucket.value ?? "");
+function renderEntityPicker(node, ctx, draft, key, spec) {
+  node.innerHTML = "";
+  const label = document.createElement("label");
+  label.textContent = spec.label || key;
+  node.appendChild(label);
+
+  if (customElements.get("ha-entity-picker")) {
+    const picker = document.createElement("ha-entity-picker");
+    picker.hass = ctx.hass;
+    picker.value = draft.slots[key] || "";
+    picker.includeDomains = spec.domains || [];
+    picker.allowCustomEntity = true;
+    picker.addEventListener("value-changed", (ev) => {
+      draft.slots[key] = ev.detail.value || "";
+    });
+    label.appendChild(picker);
+    return;
+  }
+
+  const input = document.createElement("input");
+  const listId = `entities_${key}`;
+  input.name = `slot_${key}`;
+  input.value = draft.slots[key] || "";
+  input.setAttribute("list", listId);
+  input.addEventListener("input", () => {
+    draft.slots[key] = input.value;
+  });
+  const datalist = document.createElement("datalist");
+  datalist.id = listId;
+  datalist.innerHTML = entityOptions(ctx.hass, spec.domains || []);
+  label.appendChild(input);
+  label.appendChild(datalist);
 }
 
 export function render(root, ctx) {
+  root.dataset.keepDraft = "true";
   const catalog = ctx.store.catalog || {};
   const status = ctx.store.status || {};
   const devices = status.devices || [];
-  const activeSlug = root.dataset.editSlug || "";
-  const editing = devices.find((item) => item.slug === activeSlug);
-  const editConf = editing ? editing.config : {};
-  const type = editConf.device_type || (catalog.device_types && catalog.device_types[0] && catalog.device_types[0].value) || "tv";
-  const defaults = selectedFields(catalog, type);
-  const activeFields = new Set(editConf.fields || [...defaults]);
   const slotCatalog = catalog.slot_catalog || {};
+
+  if (!root._draft) {
+    root._draft = newDraft(catalog);
+  }
+  const draft = root._draft;
+  const activeFields = new Set(draft.fields || []);
 
   root.innerHTML = `
     <div class="grid cols-2">
       <div class="card">
-        <h2>${editing ? "Update sensor" : "Create sensor"}</h2>
+        <h2>${draft.slug ? "Update sensor" : "Create sensor"}</h2>
         <form id="deviceForm" class="form">
           <label>Existing
             <select name="edit_slug">
               <option value="">New device</option>
-              ${devices.map((device) => `<option value="${esc(device.slug)}" ${device.slug === activeSlug ? "selected" : ""}>${esc(device.config.display_name || device.slug)}</option>`).join("")}
+              ${devices.map((device) => `<option value="${esc(device.slug)}" ${device.slug === draft.slug ? "selected" : ""}>${esc(device.config.display_name || device.slug)}</option>`).join("")}
             </select>
           </label>
           <label>Name
-            <input name="display_name" value="${esc(editConf.display_name || "")}" required>
+            <input name="display_name" value="${esc(draft.display_name)}" required>
           </label>
           <label>Type
             <select name="device_type">
               ${(catalog.device_types || []).map((item) =>
-                `<option value="${esc(item.value)}" ${item.value === type ? "selected" : ""}>${esc(item.label)}</option>`).join("")}
+                `<option value="${esc(item.value)}" ${item.value === draft.device_type ? "selected" : ""}>${esc(item.label)}</option>`).join("")}
             </select>
           </label>
           <div class="fields">
@@ -66,22 +160,22 @@ export function render(root, ctx) {
                 <span>${esc(spec.label || key)} <span class="muted mono">${esc((spec.domains || []).join(","))}</span></span>
               </label>`).join("")}
           </div>
-          <div id="slots"></div>
+          <div id="slots" class="slot-list"></div>
           <div class="grid cols-3">
             <label>On threshold W
-              <input name="watt_threshold_on" type="number" min="0" max="5000" value="${esc(editConf.watt_threshold_on ?? catalog.defaults?.watt_threshold_on ?? 5)}">
+              <input name="watt_threshold_on" type="number" min="0" max="5000" value="${esc(draft.watt_threshold_on)}">
             </label>
             <label>Sticky seconds
-              <input name="sticky_hold_seconds" type="number" min="0" max="3600" value="${esc(editConf.sticky_hold_seconds ?? catalog.defaults?.sticky_hold_seconds ?? 30)}">
+              <input name="sticky_hold_seconds" type="number" min="0" max="3600" value="${esc(draft.sticky_hold_seconds)}">
             </label>
             <label>Secondary sensors
               <select name="expose_secondary_sensors">
-                <option value="false" ${editConf.expose_secondary_sensors ? "" : "selected"}>Off</option>
-                <option value="true" ${editConf.expose_secondary_sensors ? "selected" : ""}>On</option>
+                <option value="false" ${draft.expose_secondary_sensors ? "" : "selected"}>Off</option>
+                <option value="true" ${draft.expose_secondary_sensors ? "selected" : ""}>On</option>
               </select>
             </label>
           </div>
-          <div class="card" style="padding:12px">
+          <div class="subpanel">
             <h2>Watt buckets</h2>
             <div class="grid cols-3">
               ${WATT_ROWS.map(([state, prefix]) => `
@@ -89,9 +183,9 @@ export function render(root, ctx) {
                   <div class="row">
                     <select name="${prefix}_op" style="max-width:88px">
                       ${(catalog.watt_operators || ["<", "<=", "=", ">", ">="]).map((op) =>
-                        `<option value="${esc(op)}" ${bucketValue(editing, state, "op") === op ? "selected" : ""}>${esc(op)}</option>`).join("")}
+                        `<option value="${esc(op)}" ${bucketValue(draft, state, "op") === op ? "selected" : ""}>${esc(op)}</option>`).join("")}
                     </select>
-                    <input name="${prefix}_value" type="number" step="0.1" min="0" value="${esc(bucketValue(editing, state, "value"))}">
+                    <input name="${prefix}_value" type="number" step="0.1" min="0" value="${esc(bucketValue(draft, state, "value"))}">
                   </div>
                 </label>`).join("")}
             </div>
@@ -116,66 +210,58 @@ export function render(root, ctx) {
   const form = root.querySelector("#deviceForm");
   const slots = root.querySelector("#slots");
   const renderSlots = () => {
-    const fields = [...form.querySelectorAll('input[name="field"]:checked')].map((input) => input.value);
-    slots.innerHTML = fields.map((key) => {
-      const spec = slotCatalog[key] || {};
-      const value = editConf[key] || "";
-      const listId = `entities_${key}`;
-      return `<label>${esc(spec.label || key)}
-        <input name="slot_${esc(key)}" value="${esc(value)}" list="${esc(listId)}">
-        <datalist id="${esc(listId)}">${entityOptions(ctx.hass, spec.domains || [])}</datalist>
-      </label>`;
-    }).join("");
+    syncDraftFromForm(root);
+    slots.innerHTML = (draft.fields || []).map((key) => `
+      <div class="entity-slot" data-slot="${esc(key)}"></div>
+    `).join("");
+    slots.querySelectorAll("[data-slot]").forEach((node) => {
+      const key = node.dataset.slot;
+      renderEntityPicker(node, ctx, draft, key, slotCatalog[key] || {});
+    });
   };
   renderSlots();
 
   form.elements.edit_slug.addEventListener("change", () => {
-    root.dataset.editSlug = form.elements.edit_slug.value;
+    const selected = devices.find((device) => device.slug === form.elements.edit_slug.value);
+    root._draft = draftFromDevice(catalog, selected);
     ctx.rerender();
   });
   form.elements.device_type.addEventListener("change", () => {
-    delete root.dataset.editSlug;
-    const nextDefaults = selectedFields(catalog, form.elements.device_type.value);
-    form.querySelectorAll('input[name="field"]').forEach((input) => {
-      input.checked = nextDefaults.has(input.value);
-    });
-    renderSlots();
+    syncDraftFromForm(root);
+    draft.slug = "";
+    draft.device_type = form.elements.device_type.value;
+    draft.fields = defaultFields(catalog, draft.device_type);
+    draft.slots = {};
+    ctx.rerender();
   });
   form.querySelectorAll('input[name="field"]').forEach((input) =>
     input.addEventListener("change", renderSlots));
+  form.querySelectorAll("input, select").forEach((input) => {
+    if (input.name !== "field" && input.name !== "edit_slug" && input.name !== "device_type") {
+      input.addEventListener("input", () => syncDraftFromForm(root));
+      input.addEventListener("change", () => syncDraftFromForm(root));
+    }
+  });
   root.querySelector("#resetForm").addEventListener("click", () => {
-    delete root.dataset.editSlug;
+    root._draft = newDraft(catalog);
     ctx.rerender();
   });
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const fields = [...form.querySelectorAll('input[name="field"]:checked')].map((input) => input.value);
-    const slotsPayload = {};
-    for (const key of fields) {
-      slotsPayload[key] = form.elements[`slot_${key}`]?.value || "";
-    }
-    const watt_buckets = WATT_ROWS
-      .map(([state, prefix]) => ({
-        state,
-        op: form.elements[`${prefix}_op`].value,
-        value: form.elements[`${prefix}_value`].value,
-      }))
-      .filter((item) => item.value !== "")
-      .map((item) => ({ state: item.state, op: item.op, value: Number(item.value) }));
+    syncDraftFromForm(root);
     await ctx.store.setDevice({
-      slug: activeSlug || undefined,
-      device_type: form.elements.device_type.value,
-      display_name: form.elements.display_name.value,
-      fields,
-      slots: slotsPayload,
-      watt_threshold_on: Number(form.elements.watt_threshold_on.value || 5),
-      sticky_hold_seconds: Number(form.elements.sticky_hold_seconds.value || 30),
-      expose_secondary_sensors: form.elements.expose_secondary_sensors.value === "true",
-      watt_buckets,
+      slug: draft.slug || undefined,
+      device_type: draft.device_type,
+      display_name: draft.display_name,
+      fields: draft.fields,
+      slots: draft.slots,
+      watt_threshold_on: draft.watt_threshold_on,
+      sticky_hold_seconds: draft.sticky_hold_seconds,
+      expose_secondary_sensors: draft.expose_secondary_sensors,
+      watt_buckets: draft.watt_buckets,
     });
-    delete root.dataset.editSlug;
+    root._draft = newDraft(catalog);
     ctx.toast("Sensor saved");
     ctx.rerender();
   });
 }
-

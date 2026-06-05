@@ -109,6 +109,10 @@ class BcdApp extends HTMLElement {
     }
     const foot = this.shadowRoot.getElementById("foot");
     if (foot && status.profile) foot.textContent = `benni_core_devices · ${status.profile}`;
+    const content = this.shadowRoot.getElementById("content");
+    if (["builder", "groups"].includes(this._view) && content?.dataset.keepDraft === "true") {
+      return;
+    }
     this._renderView();
   }
 
@@ -137,4 +141,3 @@ class BcdApp extends HTMLElement {
 if (!customElements.get("bcd-app")) {
   customElements.define("bcd-app", BcdApp);
 }
-

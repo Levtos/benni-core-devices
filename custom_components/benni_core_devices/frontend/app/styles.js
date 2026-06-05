@@ -60,6 +60,15 @@ textarea { min-height: 110px; resize: vertical; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 9px; }
 .fieldcheck { display: flex; align-items: center; gap: 8px; background: #1d2027; border: 1px solid var(--line); border-radius: 7px; padding: 8px; color: var(--fg); }
 .fieldcheck input { width: auto; min-height: auto; }
+.slot-list { display: grid; gap: 10px; }
+.entity-slot label { display: grid; gap: 6px; }
+.entity-slot ha-entity-picker { width: 100%; --mdc-theme-surface: #17191f; --mdc-theme-on-surface: var(--fg); }
+.subpanel { border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #22252d; }
+.subpanel h2 { margin: 0 0 12px; font-size: 14px; }
+.member-list { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.member-chip { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); background: #1d2027; border-radius: 999px; padding: 5px 8px 5px 10px; max-width: 100%; }
+.member-chip button { border: 0; background: var(--surface2); color: var(--muted); width: 22px; height: 22px; border-radius: 50%; cursor: pointer; line-height: 1; }
+.member-chip button:hover { color: var(--red); }
 table { width: 100%; border-collapse: collapse; }
 th, td { border-bottom: 1px solid var(--line); text-align: left; padding: 8px; font-size: 13px; vertical-align: top; }
 th { color: var(--muted); font-size: 12px; }
@@ -80,4 +89,3 @@ export function esc(value) {
 export function chip(kind, label) {
   return `<span class="chip ${esc(kind)}"><span class="dot"></span>${esc(label)}</span>`;
 }
-

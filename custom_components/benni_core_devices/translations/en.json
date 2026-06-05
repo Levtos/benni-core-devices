@@ -1,0 +1,20 @@
+{
+  "title": "Benni Core Devices",
+  "config": {
+    "step": {
+      "user": {
+        "title": "Benni Core Devices",
+        "data": {
+          "profile": "Route"
+        }
+      }
+    },
+    "error": {
+      "invalid_profile": "Invalid route"
+    },
+    "abort": {
+      "single_instance_allowed": "Benni Core Devices is already configured"
+    }
+  }
+}
+

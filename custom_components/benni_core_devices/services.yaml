@@ -1,0 +1,39 @@
+set_override:
+  name: Set override
+  description: Temporarily or permanently override one device's powered/power_state result.
+  fields:
+    slug:
+      required: true
+      selector:
+        text:
+    powered:
+      required: false
+      selector:
+        boolean:
+    power_state:
+      required: false
+      selector:
+        select:
+          options:
+            - "off"
+            - "standby"
+            - "idle"
+            - "playing"
+            - "unknown"
+    expire_seconds:
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 2592000
+          mode: box
+
+clear_override:
+  name: Clear override
+  description: Clear the active override for one device.
+  fields:
+    slug:
+      required: true
+      selector:
+        text:
+

@@ -22,8 +22,8 @@ from .const import (
     group_object_id_prefix,
 )
 from .coordinator import DeviceCoordinator
-from .services import async_register_services, async_unregister_services
-from .view import async_remove_view, async_setup_view
+from .services import async_register_services
+from .view import async_setup_view
 from .websocket_api import async_setup_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
@@ -127,13 +127,8 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 for coordinator in coords.values():
                     if isinstance(coordinator, DeviceCoordinator):
                         coordinator.async_stop_listeners()
-        has_entries = any(isinstance(v, dict) for v in hass.data.get(DOMAIN, {}).values())
-        if not has_entries:
-            async_unregister_services(hass)
-            async_remove_view(hass)
     return unloaded
 
 
 async def _async_reload_on_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
-

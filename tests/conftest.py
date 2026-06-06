@@ -32,9 +32,11 @@ device_types = _load("device_types", "device_types.py")
 logic = _load("logic", "logic.py")
 attributes = _load("attributes", "attributes.py")
 combined = _load("combined", "combined.py")
+agent_spec = _load("agent_spec", "agent_spec.py")
 
 sys.modules["bcd_const"] = const
 sys.modules["bcd_device_types"] = device_types
 sys.modules["bcd_logic"] = logic
 sys.modules["bcd_attributes"] = attributes
 sys.modules["bcd_combined"] = combined
+sys.modules["bcd_agent_spec"] = agent_spec

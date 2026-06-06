@@ -1,7 +1,7 @@
 import { chip, esc } from "../styles.js";
 
 function newState() {
-  return { bulk: "", report: null, exportYaml: "", group: { display_name: "", members: [] } };
+  return { bulk: "", report: null, exportYaml: "", agentMd: "", agentSchema: "", group: { display_name: "", members: [] } };
 }
 
 function reportCard(result) {
@@ -88,6 +88,20 @@ export function render(root, ctx) {
       </div>
     </div>
 
+    <div class="card" style="margin-top:14px">
+      <div class="section-head"><h2>Für Agenten (Claude Code / Codex)</h2>
+        <button class="btn" type="button" id="genSpec">Briefing generieren</button></div>
+      <p class="muted" style="font-size:12px; margin:0 0 10px">
+        Erzeugt ein selbsterklärendes Briefing (Markdown + JSON-Schema) für eine frische
+        Agentensession mit MCP-Anbindung — Rollen, Klassen, Import-Schema, Workflow (Dry-Run → Apply)
+        und den aktuellen Export. Builder bleiben für manuelle Eingriffe.</p>
+      ${st.agentMd ? `
+        <label>Briefing (Markdown) <button class="btn small" type="button" id="copyMd">Kopieren</button>
+          <textarea id="agentMd" readonly style="min-height:240px">${esc(st.agentMd)}</textarea></label>
+        <label style="margin-top:10px">JSON-Schema <button class="btn small" type="button" id="copySchema">Kopieren</button>
+          <textarea id="agentSchema" readonly style="min-height:140px">${esc(st.agentSchema)}</textarea></label>` : ""}
+    </div>
+
     <details class="disclosure" style="margin-top:14px">
       <summary>Light Groups <small>· untergeordnet</small></summary>
       <div class="disclosure-body">
@@ -132,6 +146,25 @@ export function render(root, ctx) {
     try { const res = await ctx.store.exportConfig(); st.exportYaml = res.yaml || ""; ctx.rerender(); }
     catch (err) { ctx.toast("Export fehlgeschlagen"); }
   });
+
+  root.querySelector("#genSpec").addEventListener("click", async () => {
+    try {
+      const res = await ctx.store.agentSpec();
+      st.agentMd = res.markdown || "";
+      st.agentSchema = JSON.stringify(res.json_schema || {}, null, 2);
+      ctx.rerender();
+      ctx.toast(`Briefing generiert (v${res.version || "?"})`);
+    } catch (err) { ctx.toast("Briefing fehlgeschlagen"); }
+  });
+  const copyTo = (sel, text) => {
+    const b = root.querySelector(sel);
+    if (b) b.addEventListener("click", () => {
+      try { navigator.clipboard.writeText(text); ctx.toast("Kopiert"); }
+      catch (e) { const ta = root.querySelector(sel === "#copyMd" ? "#agentMd" : "#agentSchema"); if (ta) { ta.select(); document.execCommand("copy"); ctx.toast("Kopiert"); } }
+    });
+  };
+  copyTo("#copyMd", st.agentMd);
+  copyTo("#copySchema", st.agentSchema);
 
   renderMemberPicker(root, ctx, st);
   renderMembers(root, st);

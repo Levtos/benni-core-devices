@@ -71,5 +71,9 @@ export class Store {
   async exportConfig() {
     return this._ws({ type: `${DOMAIN}/export_config` });
   }
+
+  async agentSpec() {
+    return this._ws({ type: `${DOMAIN}/get_agent_spec` });
+  }
 }
 

@@ -40,7 +40,7 @@ def _profile_schema(default: str = DEFAULT_PROFILE) -> vol.Schema:
 
 
 class BenniCoreDevicesConfigFlow(ConfigFlow, domain=DOMAIN):
-    VERSION = 1
+    VERSION = 2
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None

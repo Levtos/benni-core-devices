@@ -1,144 +1,86 @@
-"""Reicher Attribut- und Diagnose-Layer für Device-Atomics (Rich-Atomic-Rework).
+"""Rollenbasierter Attribut- & Diagnose-Layer für Device-Atomics v2 (HA-frei).
 
-HA-frei und in pytest testbar. Baut aus der reinen `DeviceConfig`/`DeviceInputs`/
-`DeviceResult`-Welt das vollständige Attribut-Dict, das `sensor.py` und die
-WebSocket-API am Haupt-Sensor ausgeben.
+Baut aus ``DeviceConfigV2`` + ``DeviceInputs`` (Readings keyed by ROLE) +
+``DeviceResult`` das Attribut-Dict des Haupt-Sensors:
+- Standard-Attribute (powered/power_state/available/… + ``fail_safe_active``)
+- Rollen-Diagnose (source_roles/entities/states/available, missing_required,
+  degraded(_reason), atomic_quality, consumes)
+- reiche Attribute pro ``atomic_class`` (``AtomicClassSpec.extra_attributes``)
 
-Vertrag (LH §4):
-- Standard-Attribute bleiben unverändert erhalten.
-- Generische Slot-Diagnose: `slot_entities`, `slot_states`, `slot_available`,
-  `slot_roles`, `missing_sources`, `degraded`, `degraded_reason`,
-  `atomic_quality`, `consumes`.
-- Reiche Typ-Attribute (Media/Measurement/Capability), sofern Quellen da sind.
-
-Die Power-Entscheidung (logic.compute_device) wird hier NICHT verändert — dies
-ist reine Ableitung auf dem fertigen Ergebnis.
+Metadaten-Default: fehlt eine ``metadata_sources``-Rolle, wird der Wert aus den
+Attributen der ``primary_state``-Entity gelesen (liegt in ``result.extra``).
 """
 
 from __future__ import annotations
 
 from typing import Any
 
-from .const import (
-    CONF_COMPANION_MEDIA_PLAYER,
-    CONF_COMPANION_TRACKER,
-    CONF_CURRENT_SENSOR,
-    CONF_ENERGY_SENSOR,
-    CONF_INTEGRATION_ENTITY,
-    CONF_NETWORK_SWITCH_ENTITY,
-    CONF_REMOTE_ENTITY,
-    CONF_SWITCH_ENTITY,
-    CONF_VOLTAGE_SENSOR,
-    CONF_WAKE_BUTTON_ENTITY,
-)
-from .device_types import (
-    ENTITY_SLOT_KEYS,
-    SLOT_CATALOG,
-    DeviceTypeProfile,
-)
-from .logic import DeviceConfig, DeviceInputs, DeviceResult
-
-# Attribut-Schlüssel, die der Rich-Media-Block autoritativ erzeugt. Sie werden
-# bei Bedarf gegen None aus dem Profil-Loop überschrieben.
-_MEDIA_KEYS: frozenset[str] = frozenset(
-    {
-        "media_player_state",
-        "current_app",
-        "source",
-        "media_title",
-        "media_content_type",
-        "volume_level",
-        "is_volume_muted",
-    }
-)
+from .device_types import DeviceConfigV2
+from .logic import DeviceInputs, DeviceResult
 
 
-def _slot_role(key: str) -> str:
-    spec = SLOT_CATALOG.get(key)
-    return spec.role if spec else ""
-
-
-def _is_entity_slot(key: str) -> bool:
-    return key in ENTITY_SLOT_KEYS
-
-
-def _reading_available(reading: Any) -> bool:
-    return reading is not None and reading.value is not None
+def _truthy(value: Any) -> bool | None:
+    if value is None:
+        return None
+    v = str(value).strip().lower()
+    if v in ("on", "open", "home", "true", "1", "yes", "playing", "active", "heat", "cool"):
+        return True
+    if v in ("off", "closed", "not_home", "false", "0", "no", "idle", "standby", "unavailable", "unknown"):
+        return False
+    return None
 
 
 def build_slot_diagnostics(
-    config: DeviceConfig, inputs: DeviceInputs, result: DeviceResult
+    config: DeviceConfigV2, inputs: DeviceInputs, result: DeviceResult
 ) -> dict[str, Any]:
-    """Generische, typ-unabhängige Slot-Diagnose (LH §4).
-
-    `config.fields` listet die aktivierten Slots (auch leere). `slot_entities`
-    bildet Slot → Entity ab. Leere aktivierte Entity-Slots werden zu
-    `missing_sources`; konfigurierte, aber unverfügbare Quellen zu `degraded`.
-    """
-    active_fields = list(config.fields)
-    slot_entities: dict[str, str] = {}
-    slot_states: dict[str, Any] = {}
-    slot_available: dict[str, bool] = {}
-    slot_roles: dict[str, str] = {}
-    slot_last_changed: dict[str, Any] = {}
-    missing_sources: list[str] = []
-    unavailable_slots: list[str] = []
-
-    for key in active_fields:
-        role = _slot_role(key)
-        if role:
-            slot_roles[key] = role
-        if not _is_entity_slot(key):
-            # Text-Slot (z. B. wake_mac): kein Entity-State.
-            continue
-        entity = config.slot_entities.get(key)
-        if not entity:
-            missing_sources.append(key)
-            continue
-        reading = inputs.slots.get(key)
-        available = _reading_available(reading)
-        slot_entities[key] = entity
-        slot_states[key] = reading.value if reading else None
-        slot_available[key] = available
-        if reading is not None and reading.last_updated is not None:
-            slot_last_changed[key] = reading.last_updated
+    source_entities = config.source_entities()
+    source_roles = list(source_entities.keys())
+    source_states: dict[str, Any] = {}
+    source_available: dict[str, bool] = {}
+    unavailable: list[str] = []
+    for role, entity in source_entities.items():
+        reading = inputs.slots.get(role)
+        available = reading is not None and reading.value is not None
+        source_states[role] = reading.value if reading else None
+        source_available[role] = available
         if not available:
-            unavailable_slots.append(key)
+            unavailable.append(role)
 
-    degraded = bool(unavailable_slots) or result.watt_disagrees
-    degraded_reason: list[str] = [f"{s}: unavailable" for s in unavailable_slots]
+    missing_required = config.missing_required()
+    degraded = bool(unavailable) or result.watt_disagrees or bool(missing_required) or result.fail_safe_active
+    reason: list[str] = [f"{r}: unavailable" for r in unavailable]
     if result.watt_disagrees:
-        degraded_reason.append("watt_disagrees")
-    for s in missing_sources:
-        degraded_reason.append(f"{s}: missing entity")
+        reason.append("watt_disagrees")
+    for r in missing_required:
+        reason.append(f"{r}: missing required")
+    if result.fail_safe_active:
+        reason.append("fail_safe_active")
 
     if not result.available:
-        atomic_quality = "unavailable"
-    elif degraded or missing_sources:
-        atomic_quality = "degraded"
+        quality = "unavailable"
+    elif degraded:
+        quality = "degraded"
     else:
-        atomic_quality = "ok"
+        quality = "ok"
 
     return {
-        "slot_entities": slot_entities,
-        "slot_states": slot_states,
-        "slot_available": slot_available,
-        "slot_roles": slot_roles,
-        "slot_last_changed": slot_last_changed,
-        "missing_sources": missing_sources,
+        "source_roles": source_roles,
+        "source_entities": source_entities,
+        "source_states": source_states,
+        "source_available": source_available,
+        "missing_required": missing_required,
         "degraded": degraded,
-        "degraded_reason": degraded_reason,
-        "atomic_quality": atomic_quality,
-        "consumes": sorted(slot_entities.values()),
+        "degraded_reason": reason,
+        "atomic_quality": quality,
+        "consumes": sorted(source_entities.values()),
+        "fail_safe_active": result.fail_safe_active,
     }
 
 
-def _standard_attributes(
-    config: DeviceConfig, result: DeviceResult
-) -> dict[str, Any]:
-    """Die bestehenden Standard-Attribute — unverändert (LH §4 Bestandsschutz)."""
+def _standard_attributes(config: DeviceConfigV2, result: DeviceResult) -> dict[str, Any]:
     return {
-        "device_type": config.device_type,
+        "atomic_class": config.atomic_class,
+        "variant": config.variant,
         "slug": config.slug,
         "display_name": config.display_name,
         "powered": result.powered,
@@ -149,133 +91,140 @@ def _standard_attributes(
         "override_active": result.override_active,
         "watt": result.watt,
         "watt_disagrees": result.watt_disagrees,
-        "area_id": config.area_id,
+        "fail_safe": config.fail_safe,
     }
 
 
-def _apply_profile_extra_attributes(
-    attrs: dict[str, Any], profile: DeviceTypeProfile, result: DeviceResult
-) -> None:
-    """Portiert die bisherige extra_attributes-Logik (Bestandsschutz)."""
-    for key in profile.extra_attributes:
-        if key == "watt":
-            attrs[key] = result.watt
-        elif key in ("media_player_state", "hvac_mode"):
-            attrs[key] = result.raw_state if profile.state_slot else None
-        elif key == "target_temperature":
-            attrs[key] = result.extra.get("temperature")
-        else:
-            attrs[key] = result.extra.get(key)
+def _extra_attribute(
+    key: str, config: DeviceConfigV2, inputs: DeviceInputs, result: DeviceResult
+) -> Any:
+    """Löst einen reichen Attribut-Schlüssel aus Rollen/Primary-Attrs auf."""
+    extra = result.extra or {}
 
+    def val(role: str) -> Any:
+        r = inputs.slots.get(role)
+        return r.value if r else None
 
-def _fill(attrs: dict[str, Any], key: str, value: Any) -> None:
-    """Setzt `key`, wenn noch nicht vorhanden ODER bisher None und value gesetzt."""
-    if value is None:
-        attrs.setdefault(key, None)
-        return
-    if key not in attrs or attrs[key] is None:
-        attrs[key] = value
+    def num(role: str) -> Any:
+        r = inputs.slots.get(role)
+        return r.numeric if r else None
 
+    def meta_or_attr(meta_role: str, *attr_keys: str) -> Any:
+        v = val(meta_role)
+        if v is not None:
+            return v
+        for ak in attr_keys:
+            if extra.get(ak) is not None:
+                return extra.get(ak)
+        return None
 
-def _reading_for(inputs: DeviceInputs, key: str):
-    return inputs.slots.get(key)
+    # Media / Audio
+    if key == "media_state":
+        return result.raw_state
+    if key == "current_app":
+        return meta_or_attr("app_source", "app_id", "app_name")
+    if key == "source":
+        return meta_or_attr("source_source", "source")
+    if key == "media_title":
+        return meta_or_attr("title_source", "media_title")
+    if key == "title":
+        return meta_or_attr("title_source", "media_title") or meta_or_attr("game_source")
+    if key == "volume_level" or key == "volume":
+        return meta_or_attr("volume_source", "volume_level")
+    if key == "is_volume_muted" or key == "muted":
+        return meta_or_attr("mute_source", "is_volume_muted")
+    if key == "artist":
+        return meta_or_attr("artist_source", "media_artist")
+    if key == "album":
+        return meta_or_attr("album_source", "media_album_name")
+    if key == "track":
+        return meta_or_attr("title_source", "media_title")
+    if key == "sound_mode":
+        return extra.get("sound_mode")
+    if key == "network_online" or key == "online":
+        return _truthy(val("network_presence"))
+    if key == "status":
+        return val("status_source")
+    if key == "last_online":
+        return None
 
+    # Power device
+    if key == "switch_on":
+        return _truthy(result.raw_state if config.atomic_class == "power_device" else val("primary_state"))
+    if key == "active":
+        return result.powered
+    if key == "watt":
+        return result.watt
+    if key == "energy":
+        return num("energy_meter")
+    if key == "current":
+        return num("current_meter")
+    if key == "voltage":
+        return num("voltage_meter")
 
-def _add_rich_attributes(
-    attrs: dict[str, Any], config: DeviceConfig, inputs: DeviceInputs
-) -> None:
-    """Reiche Media-/Measurement-/Capability-Attribute, sofern Slots da sind."""
-    fields = set(config.fields)
+    # Opening
+    if key == "open":
+        return _truthy(val("open_contact"))
+    if key == "tilted":
+        return _truthy(val("tilt_contact"))
+    if key == "contact_state":
+        return val("open_contact")
+    if key == "battery":
+        return num("battery_source")
 
-    # ── Media (über den integration_entity-Slot = Media Player) ─────────────
-    if CONF_INTEGRATION_ENTITY in fields and config.slot_entities.get(
-        CONF_INTEGRATION_ENTITY
-    ):
-        mp = _reading_for(inputs, CONF_INTEGRATION_ENTITY)
-        if mp is not None:
-            ma = mp.attributes or {}
-            _fill(attrs, "media_player_state", mp.value)
-            _fill(attrs, "current_app", ma.get("app_id") or ma.get("app_name"))
-            _fill(attrs, "source", ma.get("source"))
-            _fill(attrs, "media_title", ma.get("media_title"))
-            _fill(attrs, "media_content_type", ma.get("media_content_type"))
-            _fill(attrs, "volume_level", ma.get("volume_level"))
-            _fill(attrs, "is_volume_muted", ma.get("is_volume_muted"))
+    # Environment / numeric
+    if key == "temperature":
+        return num("temperature_source")
+    if key == "humidity":
+        return num("humidity_source")
+    if key == "pressure":
+        return num("pressure_source")
+    if key == "lux":
+        return num("lux_source")
+    if key == "fresh":
+        return not result.fail_safe_active
+    if key == "value":
+        return val("value_source")
 
-    # ── Measurements ────────────────────────────────────────────────────────
-    for slot_key, attr_key in (
-        (CONF_CURRENT_SENSOR, "current"),
-        (CONF_VOLTAGE_SENSOR, "voltage"),
-        (CONF_ENERGY_SENSOR, "energy"),
-    ):
-        if slot_key in fields and config.slot_entities.get(slot_key):
-            r = _reading_for(inputs, slot_key)
-            if r is not None:
-                _fill(attrs, attr_key, r.numeric if r.numeric is not None else r.value)
+    # Light
+    if key in ("brightness", "color_mode", "color_temp_kelvin", "rgb", "effect"):
+        attr_map = {"rgb": "rgb_color"}
+        return extra.get(attr_map.get(key, key))
 
-    # ── Capability / Network ────────────────────────────────────────────────
-    if CONF_SWITCH_ENTITY in fields and config.slot_entities.get(CONF_SWITCH_ENTITY):
-        r = _reading_for(inputs, CONF_SWITCH_ENTITY)
-        _fill(attrs, "switch_state", r.value if r else None)
-        _fill(attrs, "plug_switch_entity", config.slot_entities.get(CONF_SWITCH_ENTITY))
+    # Cover
+    if key == "position":
+        return val("position_source") or extra.get("current_position")
+    if key in ("moving", "calibrated"):
+        return None
 
-    if CONF_NETWORK_SWITCH_ENTITY in fields and config.slot_entities.get(
-        CONF_NETWORK_SWITCH_ENTITY
-    ):
-        r = _reading_for(inputs, CONF_NETWORK_SWITCH_ENTITY)
-        _fill(attrs, "network_access_state", r.value if r else None)
-        _fill(
-            attrs,
-            "network_switch_entity",
-            config.slot_entities.get(CONF_NETWORK_SWITCH_ENTITY),
-        )
+    # Climate
+    if key == "current_temperature":
+        return extra.get("current_temperature")
+    if key == "target_temperature":
+        return extra.get("temperature")
+    if key in ("hvac_action", "hvac_mode"):
+        return extra.get(key) if key == "hvac_action" else result.raw_state
 
-    if CONF_REMOTE_ENTITY in fields and config.slot_entities.get(CONF_REMOTE_ENTITY):
-        r = _reading_for(inputs, CONF_REMOTE_ENTITY)
-        _fill(attrs, "remote_state", r.value if r else None)
-        _fill(attrs, "remote_entity", config.slot_entities.get(CONF_REMOTE_ENTITY))
-
-    if CONF_COMPANION_MEDIA_PLAYER in fields and config.slot_entities.get(
-        CONF_COMPANION_MEDIA_PLAYER
-    ):
-        r = _reading_for(inputs, CONF_COMPANION_MEDIA_PLAYER)
-        _fill(
-            attrs,
-            "companion_media_player",
-            config.slot_entities.get(CONF_COMPANION_MEDIA_PLAYER),
-        )
-        _fill(attrs, "companion_media_player_state", r.value if r else None)
-
-    if CONF_COMPANION_TRACKER in fields and config.slot_entities.get(
-        CONF_COMPANION_TRACKER
-    ):
-        r = _reading_for(inputs, CONF_COMPANION_TRACKER)
-        _fill(
-            attrs,
-            "companion_tracker",
-            config.slot_entities.get(CONF_COMPANION_TRACKER),
-        )
-        _fill(attrs, "companion_tracker_state", r.value if r else None)
-
-    # ── Wake-on-LAN ─────────────────────────────────────────────────────────
-    wake_button = config.slot_entities.get(CONF_WAKE_BUTTON_ENTITY)
-    if CONF_WAKE_BUTTON_ENTITY in fields and wake_button:
-        _fill(attrs, "wake_button_entity", wake_button)
-    if config.wake_mac:
-        _fill(attrs, "wake_mac", config.wake_mac)
-    if wake_button or config.wake_mac:
-        _fill(attrs, "wake_supported", True)
+    # Fallback: aus den Primary-Attributen.
+    return extra.get(key)
 
 
 def build_main_attributes(
-    profile: DeviceTypeProfile,
-    config: DeviceConfig,
-    inputs: DeviceInputs,
-    result: DeviceResult,
+    config: DeviceConfigV2, inputs: DeviceInputs, result: DeviceResult
 ) -> dict[str, Any]:
-    """Vollständiges Attribut-Dict des Haupt-Sensors (eine Quelle der Wahrheit)."""
     attrs = _standard_attributes(config, result)
-    _apply_profile_extra_attributes(attrs, profile, result)
+    spec = config.spec
+    if spec:
+        for key in spec.extra_attributes:
+            attrs[key] = _extra_attribute(key, config, inputs, result)
     attrs.update(build_slot_diagnostics(config, inputs, result))
-    _add_rich_attributes(attrs, config, inputs)
+    # Text-Controls (wake_mac) + Wake-Support als Attribute.
+    wake_mac = config.value_for_role("wake_mac")
+    wake_button = config.entity_for_role("wake_button")
+    if wake_mac:
+        attrs["wake_mac"] = wake_mac
+    if wake_button:
+        attrs["wake_button_entity"] = wake_button
+    if wake_mac or wake_button:
+        attrs["wake_supported"] = True
     return attrs

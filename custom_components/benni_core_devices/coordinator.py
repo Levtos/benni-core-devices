@@ -1,14 +1,12 @@
-"""DataUpdateCoordinator für Benni Core · Devices.
+"""DataUpdateCoordinator für Benni Core · Devices v2 (rollenbasiert).
 
 Pro Device-Instanz ein Coordinator:
-- liest alle konfigurierten Slot-Entities
-- bridge HA-State → SlotReading
-- ruft pure logic.compute_device()
-- persistiert last_powered + Override über HA-Restarts
-- registriert Service-Override / Clear via services_impl
-
-Boot-Phase (R-DC-09): Coordinator merkt sich Start-Zeitpunkt;
-logic.is_boot_phase() entscheidet ob Sticky-Hold greift.
+- löst die konfigurierten Rollen → Entities auf und liest deren HA-States
+- wählt den Compute-Pfad über ``AtomicClassSpec.power_model``:
+  integration_watt_sticky → ``logic.compute_device`` (unverändert),
+  passthrough_state → ``logic.compute_passthrough``,
+  numeric → ``logic.compute_numeric``
+- persistiert last_powered + last_state + Override über HA-Restarts
 """
 
 from __future__ import annotations
@@ -27,22 +25,14 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from . import logic
+from .attributes import build_main_attributes
 from .const import (
-    CONF_DEVICE_TYPE,
-    CONF_DISPLAY_NAME,
-    CONF_EXPOSE_SECONDARY_SENSORS,
-    CONF_FIELDS,
     CONF_SLUG,
-    CONF_STICKY_HOLD_SECONDS,
-    CONF_WAKE_MAC,
-    CONF_WATT_BUCKETS,
-    CONF_WATT_THRESHOLD_ON,
-    DEFAULT_EXPOSE_SECONDARY_SENSORS,
-    DEFAULT_STICKY_HOLD_SECONDS,
-    DEFAULT_WATT_THRESHOLD_ON,
     DATA_COMBINEDS,
     DATA_COORDINATORS,
     DOMAIN,
+    POWER_MODEL_NUMERIC,
+    POWER_MODEL_PASSTHROUGH,
     STORAGE_KEY_LAST_POWERED,
     STORAGE_KEY_LAST_POWERED_CHANGE,
     STORAGE_KEY_OVERRIDE,
@@ -51,12 +41,10 @@ from .const import (
     STORAGE_KEY_OVERRIDE_POWERED,
     STORAGE_VERSION,
     UPDATE_INTERVAL_SECONDS,
-    DeviceType,
     entry_profile,
     storage_key,
 )
-from .attributes import build_main_attributes
-from .device_types import ENTITY_SLOT_KEYS, DeviceTypeProfile, profile_for
+from .device_types import DeviceConfigV2, parse_device_config
 from .logic import (
     DeviceConfig,
     DeviceInputs,
@@ -68,9 +56,11 @@ from .logic import (
 
 _LOGGER = logging.getLogger(__name__)
 
+STORAGE_KEY_LAST_STATE = "last_state"
+
 
 class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
-    """Treibt einen Device-Sensor."""
+    """Treibt einen Device-Sensor (v2, rollenbasiert)."""
 
     def __init__(
         self, hass: HomeAssistant, entry: ConfigEntry, conf: dict[str, Any]
@@ -83,96 +73,71 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
         )
         self.entry = entry
-        self._conf = conf
         self._profile_name = entry_profile(entry)
+        self._cfg: DeviceConfigV2 = parse_device_config(slug, conf) or DeviceConfigV2(
+            slug=slug,
+            display_name=str(conf.get("display_name") or slug),
+            atomic_class="generic_expert",
+            variant="adapter",
+        )
         self._store = Store(
-            hass,
-            STORAGE_VERSION,
-            storage_key(entry.entry_id, slug, self._profile_name),
+            hass, STORAGE_VERSION, storage_key(entry.entry_id, slug, self._profile_name)
         )
         self._persisted = DevicePersisted(
-            last_powered=None,
-            last_powered_change=None,
-            override=None,
+            last_powered=None, last_powered_change=None, override=None, last_state=None
         )
         self._unsub_listeners: list[CALLBACK_TYPE] = []
         self._boot_start: datetime = dt_util.now()
-        self._profile: DeviceTypeProfile = profile_for(self.device_type)
-        # Letzter Inputs-Snapshot, damit der Sensor-Layer reiche Attribute
-        # (Slot-Diagnose, Media, Measurements) ohne Re-Read bauen kann.
         self._last_inputs: DeviceInputs | None = None
 
-    # ─────────────────────────────────────────────────────── Config Access
+    # ─────────────────────────────────────────────────── Config Access
 
-    def _c(self, key: str, default: Any = None) -> Any:
-        return self._conf.get(key, default)
+    @property
+    def cfg(self) -> DeviceConfigV2:
+        return self._cfg
 
     @property
     def slug(self) -> str:
-        return str(self._conf[CONF_SLUG])
+        return self._cfg.slug
 
     @property
     def display_name(self) -> str:
-        return str(self._conf.get(CONF_DISPLAY_NAME) or self.slug)
+        return self._cfg.display_name
 
     @property
     def profile_name(self) -> str:
         return self._profile_name
 
     @property
-    def device_type(self) -> DeviceType:
-        return DeviceType(self._conf[CONF_DEVICE_TYPE])
+    def atomic_class(self) -> str:
+        return self._cfg.atomic_class
 
     @property
-    def watt_threshold_on(self) -> int:
-        return int(self._c(CONF_WATT_THRESHOLD_ON, DEFAULT_WATT_THRESHOLD_ON))
+    def variant(self) -> str:
+        return self._cfg.variant
 
     @property
-    def sticky_hold_seconds(self) -> int:
-        return int(self._c(CONF_STICKY_HOLD_SECONDS, DEFAULT_STICKY_HOLD_SECONDS))
+    def model(self) -> str:
+        return f"{self._cfg.atomic_class}/{self._cfg.variant}" if self._cfg.variant else self._cfg.atomic_class
+
+    @property
+    def power_model(self) -> str:
+        spec = self._cfg.spec
+        return spec.power_model if spec else POWER_MODEL_PASSTHROUGH
 
     @property
     def expose_secondary_sensors(self) -> bool:
-        return bool(self._c(CONF_EXPOSE_SECONDARY_SENSORS, DEFAULT_EXPOSE_SECONDARY_SENSORS))
+        return self._cfg.expose_secondary_sensors
 
     @property
-    def configured_slot_entities(self) -> dict[str, str]:
-        """Slot-Key → Entity-ID, nur tatsächlich konfigurierte Entity-Slots.
-
-        Text-Slots (z. B. ``wake_mac``) sind hier bewusst ausgenommen — sie
-        sind keine HA-Entities und dürfen nicht als State gelesen werden.
-        """
-        out: dict[str, str] = {}
-        for key in ENTITY_SLOT_KEYS:
-            eid = self._conf.get(key)
-            if eid:
-                out[key] = str(eid)
-        return out
+    def has_watt(self) -> bool:
+        return self._cfg.watt_role() is not None
 
     @property
-    def fields(self) -> tuple[str, ...]:
-        """Aktivierte Felder (auch leere) — für missing_sources-Diagnose."""
-        raw = self._conf.get(CONF_FIELDS)
-        if isinstance(raw, (list, tuple)):
-            return tuple(str(k) for k in raw)
-        # Fallback: aus den belegten Entity-Slots ableiten.
-        return tuple(self.configured_slot_entities.keys())
+    def compute_entities(self) -> dict[str, str]:
+        return self._cfg.compute_entities()
 
-    @property
-    def wake_mac(self) -> str | None:
-        value = self._conf.get(CONF_WAKE_MAC)
-        return str(value) if value else None
-
-    @property
-    def watt_slot_key(self) -> str | None:
-        """Welcher Slot-Key liefert den Watt-Sensor (für power_state R-DC-06)?"""
-        from .const import CONF_WATT_SENSOR
-
-        if CONF_WATT_SENSOR in self.configured_slot_entities:
-            return CONF_WATT_SENSOR
-        return None
-
-    # ─────────────────────────────────────────────────────── Storage
+    # ─────────────────────────────────────────────────── Storage
 
     async def async_load_stored(self) -> None:
         raw = await self._store.async_load()
@@ -183,23 +148,19 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
     async def _async_save(self) -> None:
         await self._store.async_save(_persisted_to_dict(self._persisted))
 
-    # ─────────────────────────────────────────────────────── Lifecycle
+    # ─────────────────────────────────────────────────── Lifecycle
 
     def async_start_listeners(self) -> None:
-        watched = list(self.configured_slot_entities.values())
+        watched = list(self.compute_entities.values())
         if watched:
             self._unsub_listeners.append(
-                async_track_state_change_event(
-                    self.hass, watched, self._async_on_slot_change
-                )
+                async_track_state_change_event(self.hass, watched, self._async_on_slot_change)
             )
 
     def async_stop_listeners(self) -> None:
         for unsub in self._unsub_listeners:
             unsub()
         self._unsub_listeners.clear()
-
-    # ─────────────────────────────────────────────────────── Event-Handler
 
     @callback
     def _async_on_slot_change(self, _event: Event) -> None:
@@ -210,21 +171,18 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         await self._persist_if_changed(result)
         self.async_set_updated_data(result)
 
-    # ─────────────────────────────────────────────────────── Service-Hooks
+    # ─────────────────────────────────────────────────── Service-Hooks
 
     async def async_set_override(
-        self,
-        powered: bool | None,
-        power_state: str | None,
-        expire_seconds: int | None,
+        self, powered: bool | None, power_state: str | None, expire_seconds: int | None
     ) -> DeviceResult:
-        """R-DC-07: Override aktivieren."""
         now = dt_util.now()
         override = logic.build_override(powered, power_state, expire_seconds, now)
         self._persisted = DevicePersisted(
             last_powered=self._persisted.last_powered,
             last_powered_change=self._persisted.last_powered_change,
             override=override,
+            last_state=self._persisted.last_state,
         )
         await self._async_save()
         result = self._compute()
@@ -232,18 +190,18 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         return result
 
     async def async_clear_override(self) -> DeviceResult:
-        """R-DC-07: Override entfernen."""
         self._persisted = DevicePersisted(
             last_powered=self._persisted.last_powered,
             last_powered_change=self._persisted.last_powered_change,
             override=None,
+            last_state=self._persisted.last_state,
         )
         await self._async_save()
         result = self._compute()
         self.async_set_updated_data(result)
         return result
 
-    # ─────────────────────────────────────────────────────── Compute
+    # ─────────────────────────────────────────────────── Compute
 
     async def _async_update_data(self) -> DeviceResult:
         return self._compute()
@@ -251,12 +209,15 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
     def _compute(self) -> DeviceResult:
         now = dt_util.now()
         inputs = self._read_inputs(now)
-        config = self._build_config()
-        result = logic.compute_device(config, inputs, self._persisted, now)
+        config = self._build_logic_config()
+        pm = self.power_model
+        if pm == POWER_MODEL_NUMERIC:
+            result = logic.compute_numeric(config, inputs, self._persisted, now)
+        elif pm == POWER_MODEL_PASSTHROUGH:
+            result = logic.compute_passthrough(config, inputs, self._persisted, now)
+        else:
+            result = logic.compute_device(config, inputs, self._persisted, now)
 
-        # Override-Expiry-Check: wenn aktiver Override gerade abgelaufen ist,
-        # räume ihn auf (in Storage). Kein Race weil _persist_if_changed
-        # sowieso wieder gesaved wird.
         if (
             self._persisted.override is not None
             and logic.is_override_expired(self._persisted.override, now)
@@ -265,65 +226,51 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
                 last_powered=self._persisted.last_powered,
                 last_powered_change=self._persisted.last_powered_change,
                 override=None,
+                last_state=self._persisted.last_state,
             )
-
         return result
 
     async def _persist_if_changed(self, result: DeviceResult) -> None:
+        new_state = result.state if not result.fail_safe_active else self._persisted.last_state
         if (
             result.powered == self._persisted.last_powered
             and result.last_powered_change == self._persisted.last_powered_change
+            and new_state == self._persisted.last_state
         ):
             return
         self._persisted = DevicePersisted(
             last_powered=result.powered,
             last_powered_change=result.last_powered_change,
             override=self._persisted.override,
+            last_state=new_state,
         )
         await self._async_save()
 
-    def _build_config(self) -> DeviceConfig:
-        slot_entities = self.configured_slot_entities
+    def _build_logic_config(self) -> DeviceConfig:
         return DeviceConfig(
-            slug=self.slug,
-            display_name=self.display_name,
-            device_type=self.device_type.value,
-            watt_threshold_on=self.watt_threshold_on,
-            watt_buckets=logic.parse_watt_buckets(self._c(CONF_WATT_BUCKETS)),
-            sticky_hold_seconds=self.sticky_hold_seconds,
+            slug=self._cfg.slug,
+            display_name=self._cfg.display_name,
+            device_type=self._cfg.atomic_class,
+            watt_threshold_on=self._cfg.watt_threshold_on,
+            watt_buckets=logic.parse_watt_buckets(list(self._cfg.watt_buckets)),
+            sticky_hold_seconds=self._cfg.sticky_hold_seconds,
             area_id=self._derive_area_id(),
-            configured_slots=tuple(slot_entities.keys()),
-            slot_entities=slot_entities,
-            fields=self.fields,
-            wake_mac=self.wake_mac,
-        )
-
-    @property
-    def main_attributes(self) -> dict[str, Any]:
-        """Vollständiges Attribut-Dict des Haupt-Sensors (Rich-Atomic-Layer).
-
-        Eine Quelle der Wahrheit für sensor.py UND die WebSocket-API.
-        """
-        result = self.data
-        if result is None or self._last_inputs is None:
-            return {}
-        return build_main_attributes(
-            self._profile, self._build_config(), self._last_inputs, result
+            configured_slots=tuple(self.compute_entities.keys()),
+            fail_safe=self._cfg.fail_safe,
         )
 
     def _derive_area_id(self) -> str | None:
-        """area_id aus HA-Area-Registry der Pflicht-Slot-Entity (OQ-5)."""
-        slot_key = self._profile.integration_slot
-        if not slot_key:
-            return None
-        eid = self.configured_slot_entities.get(slot_key)
+        role = self._cfg.integration_role()
+        eid = self._cfg.entity_for_role(role) if role else None
+        if not eid:
+            srcs = self._cfg.source_entities()
+            eid = next(iter(srcs.values()), None)
         if not eid:
             return None
         ent_reg = async_get_entities(self.hass)
         entry = ent_reg.async_get(eid)
         if entry is None:
             return None
-        # area_id kann direkt am Entity oder am Device hängen
         if entry.area_id:
             return entry.area_id
         if entry.device_id:
@@ -337,13 +284,26 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
 
     def _read_inputs(self, now: datetime) -> DeviceInputs:
         slots: dict[str, SlotReading] = {}
-        for slot_key, entity_id in self.configured_slot_entities.items():
-            slots[slot_key] = self._read_slot(entity_id)
+        for role, entity_id in self.compute_entities.items():
+            slots[role] = self._read_slot(entity_id)
+        pm = self.power_model
+        if pm == POWER_MODEL_NUMERIC:
+            integration_slot = None
+            state_slot = self._cfg.numeric_role()
+            watt_slot = None
+        elif pm == POWER_MODEL_PASSTHROUGH:
+            integration_slot = self._cfg.integration_role()
+            state_slot = self._cfg.state_role() or integration_slot
+            watt_slot = None
+        else:
+            integration_slot = self._cfg.integration_role()
+            state_slot = self._cfg.state_role()
+            watt_slot = self._cfg.watt_role()
         inputs = DeviceInputs(
             slots=slots,
-            integration_slot=self._profile.integration_slot,
-            state_slot=self._profile.state_slot,
-            watt_slot=self.watt_slot_key,
+            integration_slot=integration_slot,
+            state_slot=state_slot,
+            watt_slot=watt_slot,
             boot_phase_active=logic.is_boot_phase(self._boot_start, now),
         )
         self._last_inputs = inputs
@@ -365,9 +325,16 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             last_updated=state.last_updated,
         )
 
+    @property
+    def main_attributes(self) -> dict[str, Any]:
+        result = self.data
+        if result is None or self._last_inputs is None:
+            return {}
+        return build_main_attributes(self._cfg, self._last_inputs, result)
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Combined-Atomic-Coordinator (v0)
+# Combined-Atomic-Coordinator (v0, unverändert)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -426,9 +393,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
                 numeric = float(state.state)
             except (TypeError, ValueError):
                 numeric = None
-            readings[src.key] = SourceReading(
-                value=state.state, numeric=numeric, available=True
-            )
+            readings[src.key] = SourceReading(value=state.state, numeric=numeric, available=True)
         return readings
 
     def _compute(self):
@@ -444,9 +409,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
         watched = self.source_entities
         if watched:
             self._unsub_listeners.append(
-                async_track_state_change_event(
-                    self.hass, watched, self._async_on_source_change
-                )
+                async_track_state_change_event(self.hass, watched, self._async_on_source_change)
             )
 
     def async_stop_listeners(self) -> None:
@@ -496,7 +459,6 @@ class CombinedCoordinator(DataUpdateCoordinator):
 def combined_coordinators_for_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, "CombinedCoordinator"]:
-    """Alle Combined-Coordinators (slug → coord) des Hub-Entries."""
     bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if not bucket:
         return {}
@@ -508,7 +470,6 @@ def combined_coordinators_for_entry(
 def coordinators_for_entry(
     hass: HomeAssistant, entry: ConfigEntry
 ) -> dict[str, DeviceCoordinator]:
-    """Alle Device-Coordinators (slug → coord) des Hub-Entries."""
     bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id)
     if not bucket:
         return {}
@@ -518,7 +479,6 @@ def coordinators_for_entry(
 
 @callback
 def all_coordinators(hass: HomeAssistant) -> list[DeviceCoordinator]:
-    """Alle Device-Coordinators über alle Hub-Entries (Service-Resolution)."""
     out: list[DeviceCoordinator] = []
     for bucket in hass.data.get(DOMAIN, {}).values():
         if not isinstance(bucket, dict):
@@ -548,6 +508,7 @@ def _persisted_to_dict(p: DevicePersisted) -> dict[str, Any]:
         STORAGE_KEY_LAST_POWERED_CHANGE: (
             p.last_powered_change.isoformat() if p.last_powered_change else None
         ),
+        STORAGE_KEY_LAST_STATE: p.last_state,
         STORAGE_KEY_OVERRIDE: None,
     }
     if p.override is not None:
@@ -568,14 +529,13 @@ def _persisted_from_dict(raw: dict[str, Any]) -> DevicePersisted:
         override = Override(
             powered=override_raw.get(STORAGE_KEY_OVERRIDE_POWERED),
             power_state=override_raw.get(STORAGE_KEY_OVERRIDE_POWER_STATE),
-            expires_at=_parse_iso(
-                override_raw.get(STORAGE_KEY_OVERRIDE_EXPIRES_AT)
-            ),
+            expires_at=_parse_iso(override_raw.get(STORAGE_KEY_OVERRIDE_EXPIRES_AT)),
         )
     return DevicePersisted(
         last_powered=raw.get(STORAGE_KEY_LAST_POWERED),
         last_powered_change=_parse_iso(raw.get(STORAGE_KEY_LAST_POWERED_CHANGE)),
         override=override,
+        last_state=raw.get(STORAGE_KEY_LAST_STATE),
     )
 
 

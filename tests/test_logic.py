@@ -435,54 +435,42 @@ def test_last_powered_change_persists_when_no_transition():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_all_device_types_have_default_fields():
+def test_all_atomic_classes_have_roles():
     import bcd_device_types as DT
 
-    for dt in C.DeviceType:
-        assert DT.default_fields(dt), f"{dt.value} hat keine Default-Felder"
+    for spec in DT.ATOMIC_CLASSES.values():
+        roles = spec.default_roles or spec.required_roles
+        assert roles, f"{spec.atomic_class} ohne Rollen"
 
 
-def test_integration_slot_in_catalog_and_defaults():
+def test_integration_roles_in_role_catalog():
     import bcd_device_types as DT
 
-    for dt in C.DeviceType:
-        profile = DT.profile_for(dt)
-        if profile.integration_slot is not None:
-            assert profile.integration_slot in DT.SLOT_CATALOG, (
-                f"{dt.value}: integration_slot fehlt im Katalog"
-            )
-            assert profile.integration_slot in profile.default_fields, (
-                f"{dt.value}: integration_slot nicht in default_fields"
-            )
+    for spec in DT.ATOMIC_CLASSES.values():
+        for role in spec.integration_roles:
+            assert role in DT.ROLE_CATALOG, f"{spec.atomic_class}: {role} fehlt"
+        if spec.state_role:
+            assert spec.state_role in DT.ROLE_CATALOG
+        for role in spec.required_roles:
+            assert role in DT.ROLE_CATALOG
 
 
-def test_slot_catalog_domains_are_tight():
+def test_role_catalog_buckets_and_domains():
     import bcd_device_types as DT
 
-    # Jedes Feld akzeptiert genau eine spezifische Domain (kein Domain-Misch).
-    expected = {
-        "integration_entity": ("media_player",),
-        "power_entity": ("binary_sensor",),
-        "watt_sensor": ("sensor",),
-        "wifi_sensor": ("binary_sensor",),
-        "switch_entity": ("switch",),
-        "light_entity": ("light",),
-        "cover_entity": ("cover",),
-    }
-    for key, doms in expected.items():
-        assert DT.SLOT_CATALOG[key].domains == doms, (
-            f"{key}: erwartet {doms}, ist {DT.SLOT_CATALOG[key].domains}"
-        )
+    assert DT.ROLE_CATALOG["primary_state"].bucket == DT.BUCKET_SOURCES
+    assert DT.ROLE_CATALOG["power_switch"].bucket == DT.BUCKET_CONTROLS
+    assert DT.ROLE_CATALOG["companion_media"].bucket == DT.BUCKET_METADATA
+    assert DT.ROLE_CATALOG["open_contact"].domains == ("binary_sensor",)
+    assert DT.ROLE_CATALOG["primary_state"].compute_relevant is True
 
 
-def test_import_validation_relaxed_slots_optional():
+def test_import_validation_atomic_class():
     import bcd_device_types as DT
 
-    # Neues Modell: TV ohne integration_entity ist KEIN Fehler mehr
-    assert DT.validate_import_device({"slug": "living_tv", "device_type": "tv"}) is None
-    # nur slug + device_type pflicht
-    assert DT.validate_import_device({"slug": "x", "device_type": "nope"}) is not None
-    assert DT.validate_import_device({"slug": "Bad Slug", "device_type": "tv"}) is not None
+    assert DT.validate_import_device({"slug": "living_tv", "atomic_class": "media_device"}) is None
+    assert DT.validate_import_device({"slug": "x", "atomic_class": "nope"}) is not None
+    assert DT.validate_import_device({"slug": "Bad Slug", "atomic_class": "media_device"}) is not None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -500,25 +488,19 @@ def test_is_valid_slug():
     assert DT.is_valid_slug("") is False
 
 
-def test_validate_import_device_ok_plug():
+def test_validate_import_device_ok_power():
     import bcd_device_types as DT
 
-    d = {"slug": "kitchen_coffee", "device_type": "plug", "switch_entity": "switch.x"}
+    d = {"slug": "kitchen_coffee", "atomic_class": "power_device",
+         "sources": [{"role": "primary_state", "entity": "switch.x"}]}
     assert DT.validate_import_device(d) is None
 
 
-def test_validate_import_device_slot_optional_now():
+def test_validate_import_device_bad_slug_and_class():
     import bcd_device_types as DT
 
-    # Neues Modell: TV ohne integration_entity ist OK (Slots optional)
-    assert DT.validate_import_device({"slug": "living_tv", "device_type": "tv"}) is None
-
-
-def test_validate_import_device_bad_slug_and_type():
-    import bcd_device_types as DT
-
-    assert DT.validate_import_device({"slug": "Bad Slug", "device_type": "plug"}) is not None
-    assert DT.validate_import_device({"slug": "x", "device_type": "nope"}) is not None
+    assert DT.validate_import_device({"slug": "Bad Slug", "atomic_class": "power_device"}) is not None
+    assert DT.validate_import_device({"slug": "x", "atomic_class": "nope"}) is not None
     assert DT.validate_import_device("notadict") is not None
 
 
@@ -526,11 +508,11 @@ def test_validate_import_payload_all_or_nothing():
     import bcd_device_types as DT
 
     devices = [
-        {"slug": "living_pc", "device_type": "plug", "switch_entity": "switch.pc"},
-        {"slug": "bad_one", "device_type": "nonsense"},  # invalid device_type
+        {"slug": "living_pc", "atomic_class": "power_device"},
+        {"slug": "bad_one", "atomic_class": "nonsense"},  # invalid atomic_class
     ]
     valid, errors = DT.validate_import_payload(devices)
-    assert errors  # has at least one error
+    assert errors
     assert any("bad_one" in e for e in errors)
 
 
@@ -538,8 +520,8 @@ def test_validate_import_payload_duplicate_slug():
     import bcd_device_types as DT
 
     devices = [
-        {"slug": "x", "device_type": "plug", "switch_entity": "switch.a"},
-        {"slug": "x", "device_type": "plug", "switch_entity": "switch.b"},
+        {"slug": "x", "atomic_class": "power_device"},
+        {"slug": "x", "atomic_class": "power_device"},
     ]
     valid, errors = DT.validate_import_payload(devices)
     assert any("doppelter slug" in e for e in errors)
@@ -548,18 +530,11 @@ def test_validate_import_payload_duplicate_slug():
 def test_validate_import_payload_normalizes_and_defaults():
     import bcd_device_types as DT
 
-    devices = [
-        {"slug": "Living_PC", "device_type": "plug", "switch_entity": "switch.pc"},
-    ]
-    # uppercase slug ist invalid (Bad slug) → wir testen lowercase-normalisierung
-    # mit gültigem slug:
-    devices = [
-        {"slug": "living_pc", "device_type": "plug", "switch_entity": "switch.pc"},
-    ]
+    devices = [{"slug": "living_pc", "atomic_class": "power_device"}]
     valid, errors = DT.validate_import_payload(devices)
     assert not errors
     assert valid[0]["slug"] == "living_pc"
-    assert valid[0]["display_name"] == "living_pc"  # default = slug
+    assert valid[0]["display_name"] == "living_pc"
 
 
 def test_validate_import_payload_empty_is_error():
@@ -628,27 +603,23 @@ def test_classify_source_detects_own_entities():
     assert DT.classify_source_entity("sensor.benni_device_tv") is None  # ohne Präfixe
 
 
-def test_new_slots_in_catalog_with_groups():
+def test_roles_present_in_catalog():
     import bcd_device_types as DT
 
-    for key in (
-        "current_sensor", "voltage_sensor", "energy_sensor",
-        "network_switch_entity", "wake_button_entity", "remote_entity",
-        "companion_media_player", "companion_tracker", "wake_mac",
+    for role in (
+        "primary_state", "power_meter", "open_contact", "tilt_contact",
+        "temperature_source", "network_presence", "status_source",
+        "power_switch", "wake_mac", "companion_media", "current_meter",
     ):
-        assert key in DT.SLOT_CATALOG, f"{key} fehlt im Katalog"
-        assert DT.SLOT_CATALOG[key].group in DT.SLOT_GROUP_ORDER
+        assert role in DT.ROLE_CATALOG, f"{role} fehlt im Rollenkatalog"
 
 
-def test_wake_mac_is_text_slot_not_entity_slot():
+def test_wake_mac_text_role():
     import bcd_device_types as DT
 
-    assert DT.SLOT_CATALOG["wake_mac"].kind == "text"
-    assert "wake_mac" not in DT.ENTITY_SLOT_KEYS
-    assert "wake_mac" in DT.TEXT_SLOT_KEYS
-    # Entity-Slots haben mindestens eine Domain
-    for key in DT.ENTITY_SLOT_KEYS:
-        assert DT.SLOT_CATALOG[key].domains, f"{key} ohne Domain"
+    assert DT.ROLE_CATALOG["wake_mac"].kind == "text"
+    assert DT.ROLE_CATALOG["wake_mac"].domains == ()
+    assert DT.ROLE_CATALOG["wake_mac"].bucket == DT.BUCKET_CONTROLS
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -656,54 +627,14 @@ def test_wake_mac_is_text_slot_not_entity_slot():
 # ─────────────────────────────────────────────────────────────────────────────
 
 
-def test_climate_type_exists_with_raw_attributes():
+def test_climate_class_spec():
     import bcd_device_types as DT
 
-    p = DT.profile_for(C.DeviceType.CLIMATE)
-    assert "climate_entity" in p.default_fields
-    assert p.integration_slot == "climate_entity"
-    # nur rohe/geräte-inhärente Attribute, KEIN comfort/eco
-    assert set(p.extra_attributes) == {
-        "current_temperature",
-        "target_temperature",
-        "hvac_action",
-        "hvac_mode",
+    spec = DT.ATOMIC_CLASSES["climate_device"]
+    assert spec.power_model == "passthrough_state"
+    assert "climate_source" in spec.required_roles
+    assert set(spec.extra_attributes) == {
+        "current_temperature", "target_temperature", "hvac_action", "hvac_mode",
     }
-    assert "comfort" not in p.extra_attributes
-    assert "eco" not in p.extra_attributes
-    assert "value_state" not in p.extra_attributes
-
-
-def test_climate_powered_when_hvac_mode_active():
-    cfg = _config(
-        configured=("climate_entity",),
-    )
-    cfg = L.DeviceConfig(
-        slug="therm", display_name="Thermostat", device_type="climate",
-        watt_threshold_on=5, watt_buckets=(), sticky_hold_seconds=30,
-        area_id=None, configured_slots=("climate_entity",),
-    )
-    inp = _inputs(
-        {"climate_entity": _reading("heat")},
-        integration_slot="climate_entity",
-        state_slot="climate_entity",
-    )
-    r = L.compute_device(cfg, inp, _persisted(), NOW)
-    assert r.powered is True  # hvac_mode 'heat' = aktiv
-    assert r.state == "heat"
-
-
-def test_climate_off_is_not_powered():
-    cfg = L.DeviceConfig(
-        slug="therm", display_name="Thermostat", device_type="climate",
-        watt_threshold_on=5, watt_buckets=(), sticky_hold_seconds=30,
-        area_id=None, configured_slots=("climate_entity",),
-    )
-    inp = _inputs(
-        {"climate_entity": _reading("off")},
-        integration_slot="climate_entity",
-        state_slot="climate_entity",
-    )
-    r = L.compute_device(cfg, inp, _persisted(), NOW)
-    assert r.powered is False
-    assert r.state == "off"
+    assert "comfort" not in spec.extra_attributes
+    assert "eco" not in spec.extra_attributes

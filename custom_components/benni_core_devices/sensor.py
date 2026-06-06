@@ -62,7 +62,7 @@ def _device_info(coordinator: DeviceCoordinator) -> DeviceInfo:
         identifiers={(DOMAIN, f"device:{coordinator.slug}")},
         name=coordinator.display_name,
         manufacturer="Benni Core · Devices",
-        model=coordinator.device_type.value,
+        model=coordinator.model,
         via_device=HUB_IDENTIFIER,
     )
 
@@ -77,7 +77,7 @@ async def async_get_entities(
         out.append(DeviceMainSensor(coordinator, entry))
         if coordinator.expose_secondary_sensors:
             out.append(PowerStateSensor(coordinator, entry))
-            if coordinator.watt_slot_key:
+            if coordinator.has_watt:
                 out.append(WattSensor(coordinator, entry))
     # Combined-Atomics (First-Match-Wins) — ein Sensor je Combined.
     for coordinator in combined_coordinators_for_entry(hass, entry).values():

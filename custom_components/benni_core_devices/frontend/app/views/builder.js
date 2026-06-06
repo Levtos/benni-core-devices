@@ -191,11 +191,18 @@ export function render(root, ctx) {
   const ci = classInfo(catalog, d.atomic_class);
 
   const required = ci.required_roles || [];
-  const sourceRoles = Object.keys(roleCatalog).filter((r) => roleCatalog[r].bucket === "sources");
-  const optionalSources = sourceRoles.filter((r) => !required.includes(r));
-  const controlRoles = Object.keys(roleCatalog).filter((r) => roleCatalog[r].bucket === "controls");
-  const metaRoles = Object.keys(roleCatalog).filter((r) => roleCatalog[r].bucket === "metadata_sources");
+  const isExpertClass = d.atomic_class === "generic_expert";
+  const allByBucket = (bucket) => Object.keys(roleCatalog).filter((r) => roleCatalog[r].bucket === bucket);
+  // v2.1: klassenspezifische Allowlists; generic_expert = voller Katalog.
+  const optionalRoles = (isExpertClass ? allByBucket("sources") : (ci.optional_roles || [])).filter((r) => !required.includes(r));
+  const controlRoles = isExpertClass ? allByBucket("controls") : (ci.control_roles || []);
+  const metaRoles = isExpertClass ? allByBucket("metadata_sources") : (ci.metadata_override_roles || []);
   const isWattModel = ci.power_model === "integration_watt_sticky";
+  // Domains pro Klasse einengen (z. B. primary_state → media_player bei TV).
+  const domainsFor = (role) => (ci.role_domain_overrides && ci.role_domain_overrides[role])
+    || (roleCatalog[role] && roleCatalog[role].domains) || [];
+  const effSpec = (role) => ({ ...(roleCatalog[role] || {}), domains: domainsFor(role) });
+  const rrow = (role) => roleRow(role, effSpec(role));
 
   root.innerHTML = `
     <div class="split">
@@ -226,23 +233,26 @@ export function render(root, ctx) {
 
           <div class="step primary-step">
             <div class="step-head"><span class="num">2</span><div><h3>Pflichtquellen</h3><small>${ci.required_mode === "any" ? "eine genügt" : "alle erforderlich"}: ${esc(required.join(", "))}</small></div></div>
-            ${required.map((r) => roleRow(r, roleCatalog[r] || {})).join("") || `<div class="muted">Keine Pflichtrollen.</div>`}
+            ${required.map(rrow).join("") || `<div class="muted">Keine Pflichtrollen.</div>`}
           </div>
 
-          <details class="disclosure" ${d._showOpt ? "open" : ""} data-disc="opt">
-            <summary>Optionale Quellen <small>· ${optionalSources.length} Rollen</small></summary>
-            <div class="disclosure-body">${optionalSources.map((r) => roleRow(r, roleCatalog[r] || {})).join("")}</div>
-          </details>
+          ${optionalRoles.length ? `<details class="disclosure" ${d._showOpt ? "open" : ""} data-disc="opt">
+            <summary>Optionale Quellen <small>· ${optionalRoles.length} Rollen</small></summary>
+            <div class="disclosure-body">${optionalRoles.map(rrow).join("")}</div>
+          </details>` : ""}
 
-          <details class="disclosure" ${d._showCtrl ? "open" : ""} data-disc="ctrl">
+          ${controlRoles.length ? `<details class="disclosure" ${d._showCtrl ? "open" : ""} data-disc="ctrl">
             <summary>Controls <small>· Capability-Entities (Attribut-only)</small></summary>
-            <div class="disclosure-body">${controlRoles.map((r) => roleRow(r, roleCatalog[r] || {})).join("")}</div>
-          </details>
+            <div class="disclosure-body">${controlRoles.map(rrow).join("")}</div>
+          </details>` : ""}
 
-          <details class="disclosure" ${d._showMeta ? "open" : ""} data-disc="meta">
-            <summary>Metadaten <small>· Attribut-Anreicherung aus separater Entity</small></summary>
-            <div class="disclosure-body">${metaRoles.map((r) => roleRow(r, roleCatalog[r] || {})).join("")}</div>
-          </details>
+          ${metaRoles.length ? `<details class="disclosure" ${d._showMeta ? "open" : ""} data-disc="meta">
+            <summary>Abweichende Quelle für einzelne Attribute <small>· optional, sonst aus der Hauptquelle abgeleitet</small></summary>
+            <div class="disclosure-body">
+              <p class="muted" style="font-size:12px;margin:0 0 8px">Standardmäßig werden Titel, App, Quelle, Lautstärke usw. automatisch aus den Attributen der Hauptquelle gelesen. Nur ausfüllen, wenn eine separate Entity nötig ist (z. B. PS5-Titel-Sensor).</p>
+              ${metaRoles.map(rrow).join("")}
+            </div>
+          </details>` : ""}
 
           <details class="disclosure" ${d._showAdv ? "open" : ""} data-disc="adv">
             <summary>Erweitert <small>· Fail-Safe${isWattModel ? " · Power & Fallbacks" : ""}</small></summary>
@@ -279,7 +289,7 @@ export function render(root, ctx) {
 
   const form = root.querySelector("#deviceForm");
   root.querySelectorAll("[data-role]").forEach((node) =>
-    renderPicker(node, ctx, d, node.dataset.role, roleCatalog[node.dataset.role] || {}, () => refreshSummary(root, ctx)));
+    renderPicker(node, ctx, d, node.dataset.role, effSpec(node.dataset.role), () => refreshSummary(root, ctx)));
   refreshSummary(root, ctx);
 
   root.querySelector("#modeNew").addEventListener("click", () => { root._draft = newDraft(catalog); ctx.rerender(); });

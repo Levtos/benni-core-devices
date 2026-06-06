@@ -222,6 +222,10 @@ def _catalog() -> dict[str, Any]:
             "required_roles": list(spec.required_roles),
             "required_mode": spec.required_mode,
             "default_roles": list(spec.default_roles or spec.required_roles),
+            "optional_roles": list(spec.optional_roles),
+            "control_roles": list(spec.control_roles),
+            "metadata_override_roles": list(spec.metadata_override_roles),
+            "role_domain_overrides": {k: list(v) for k, v in spec.role_domain_overrides.items()},
             "extra_attributes": list(spec.extra_attributes),
             "fail_safe": spec.fail_safe,
             "beta": spec.beta,
@@ -229,6 +233,7 @@ def _catalog() -> dict[str, Any]:
         "role_catalog": {key: {
             "key": spec.key, "domains": list(spec.domains), "bucket": spec.bucket,
             "compute_relevant": spec.compute_relevant, "kind": spec.kind, "label": spec.label,
+            "derive_attr": spec.derive_attr,
         } for key, spec in ROLE_CATALOG.items()},
         "fail_safe_choices": list(FAIL_SAFE_CHOICES),
         "availability_rules": [AVAILABILITY_ANY_REQUIRED_OR_ANY_SOURCE],
@@ -380,7 +385,15 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
     @websocket_api.websocket_command({vol.Required("type"): WS_GET_CATALOG})
     @websocket_api.async_response
     async def ws_get_catalog(hass, connection, msg) -> None:
-        connection.send_result(msg["id"], _catalog())
+        cat = _catalog()
+        try:
+            from homeassistant.loader import async_get_integration
+
+            integration = await async_get_integration(hass, DOMAIN)
+            cat["version"] = str(integration.version)
+        except Exception:  # noqa: BLE001
+            cat["version"] = "?"
+        connection.send_result(msg["id"], cat)
 
     @websocket_api.websocket_command({
         vol.Required("type"): WS_SET_DEVICE,

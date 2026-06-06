@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 — Versions-Badge + v2.1-Auslieferung
+
+- **Version im Panel sichtbar**: WebSocket-Katalog liefert die Integrations-
+  Version (aus dem Manifest); das Panel zeigt sie als Chip oben rechts und im
+  Sidebar-Fuß. So ist sofort erkennbar, welcher Stand wirklich deployt ist.
+- **Versions-Bump** erzwingt ein echtes HACS-Update: v2 und v2.1 trugen beide
+  `0.3.0`, weshalb HACS „keine neue Version" sah und den alten Stand behielt.
+  0.3.1 transportiert die v2.1-Korrekturen (abgeleitete Metadaten, klassen-
+  gescopte Rollen, eingeengte Domains) zuverlässig auf die Instanz.
+
 ## 0.3.0 — Rollenbasierter v2-Rework (Hard-Rework)
 
 Harter Rework: `device_type` + flache Slots → `atomic_class` + `variant` +
@@ -33,6 +43,19 @@ Rückwärtskompatibilität nötig (Integration nicht produktiv).
   Optional/Controls/Metadaten/Erweitert), Diagnose mit „Missing Required".
 - Entry-Version 2 + minimaler `async_migrate_entry` (kein Migrator; verwirft alte
   flache Devices, behält Combineds/Groups).
+
+### v2.1-Korrekturen (Builder-UX)
+- **Metadaten werden abgeleitet, nicht zugewiesen:** Titel/App/Quelle/Volume/Mute
+  etc. kommen automatisch aus den `primary_state`-Attributen (`RoleSpec.derive_attr`).
+  Kein Pflicht-Picker mehr; ein Expert-Disclosure „Abweichende Quelle für einzelne
+  Attribute" erlaubt optionale Overrides (z. B. PS5-Titel-Sensor).
+- **Rollen pro Klasse gescopt:** `AtomicClassSpec.optional_roles` / `control_roles` /
+  `metadata_override_roles`; der Builder zeigt nur diese (voller Katalog nur bei
+  `generic_expert`).
+- **`primary_state`-Domains pro Klasse eingeengt** (`role_domain_overrides`): TV →
+  media_player, plug → switch, console → device_tracker/binary_sensor + sensor.
+- **Console:** `online`/`offline` zu truthy/falsy ergänzt.
+- Wording: Detail-Panel „Slots" → „Quellen".
 
 ### Hinweise
 - Alte `CONF_*_ENTITY`-Konstanten bleiben als isolierte Legacy-Konstanten in

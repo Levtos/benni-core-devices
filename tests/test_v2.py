@@ -160,3 +160,39 @@ def test_parse_device_config_roundtrip():
 def test_parse_device_config_invalid_class_is_none():
     assert DT.parse_device_config("x", {"atomic_class": "nope"}) is None
     assert DT.parse_device_config("x", "notadict") is None
+
+
+# ── v2.1: Domain-Scoping + Metadaten-Ableitung + Console online/offline ──────
+
+
+def test_role_domain_override_per_class():
+    assert DT.ATOMIC_CLASSES["media_device"].domains_for("primary_state") == ("media_player",)
+    assert DT.ATOMIC_CLASSES["power_device"].domains_for("primary_state") == ("switch",)
+    # nicht überschriebene Rolle fällt auf den Katalog zurück
+    assert DT.ATOMIC_CLASSES["media_device"].domains_for("power_meter") == ("sensor",)
+
+
+def test_metadata_roles_declare_derive_attr():
+    assert DT.ROLE_CATALOG["title_source"].derive_attr == "media_title"
+    assert DT.ROLE_CATALOG["app_source"].derive_attr == "app_id"
+    assert DT.ROLE_CATALOG["volume_source"].derive_attr == "volume_level"
+
+
+def test_class_role_allowlists_scoped():
+    media = DT.ATOMIC_CLASSES["media_device"]
+    # Standard-Builder zeigt nur diese Controls — nicht den ganzen Katalog
+    assert "power_switch" in media.control_roles
+    assert "open_contact" not in media.control_roles
+    assert "title_source" in media.metadata_override_roles
+
+
+def test_console_online_offline_truthy():
+    cfg = L.DeviceConfig(slug="ps5", display_name="PS5", device_type="console_device")
+    inp = _inp({"network_presence": _reading("online")},
+               integration_slot="network_presence", state_slot="status_source")
+    r = L.compute_device(cfg, inp, _p(), NOW)
+    assert r.powered is True
+    inp2 = _inp({"network_presence": _reading("offline")},
+                integration_slot="network_presence", state_slot="status_source")
+    r2 = L.compute_device(cfg, inp2, _p(), NOW)
+    assert r2.powered is False

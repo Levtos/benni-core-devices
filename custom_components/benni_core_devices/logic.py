@@ -160,12 +160,12 @@ class DeviceResult:
 
 _TRUTHY = frozenset(
     {
-        "on", "home", "true", "1", "yes", "active", "playing", "open",
+        "on", "home", "true", "1", "yes", "active", "playing", "open", "online",
         # climate hvac_mode-Werte (Thermostat aktiv = powered)
         "heat", "cool", "auto", "heat_cool", "dry", "fan_only",
     }
 )
-_FALSY = frozenset({"off", "not_home", "false", "0", "no", "inactive", "idle", "closed"})
+_FALSY = frozenset({"off", "not_home", "false", "0", "no", "inactive", "idle", "closed", "offline"})
 
 
 def _as_bool(value: str | None) -> bool | None:

@@ -68,10 +68,16 @@ class RoleSpec:
     compute_relevant: bool = False
     kind: str = "entity"  # "entity" | "text"
     label: str = ""
+    # Metadaten-Ableitung (v2.1): wenn kein expliziter metadata_sources-Eintrag
+    # existiert, wird der Wert aus dem Attribut der ``derive_from``-Rolle gelesen.
+    derive_from: str | None = None
+    derive_attr: str | None = None
 
 
-def _r(key, domains, bucket, compute_relevant=False, kind="entity", label=""):
-    return RoleSpec(key, domains, bucket, compute_relevant, kind, label or key)
+def _r(key, domains, bucket, compute_relevant=False, kind="entity", label="",
+       derive_from=None, derive_attr=None):
+    return RoleSpec(key, domains, bucket, compute_relevant, kind, label or key,
+                    derive_from, derive_attr)
 
 
 ROLE_CATALOG: Final[dict[str, RoleSpec]] = {s.key: s for s in (
@@ -102,15 +108,16 @@ ROLE_CATALOG: Final[dict[str, RoleSpec]] = {s.key: s for s in (
     _r("remote_control", ("remote",), BUCKET_CONTROLS, False, label="Fernbedienung"),
     _r("wake_button", ("button",), BUCKET_CONTROLS, False, label="Wake-Button"),
     _r("wake_mac", (), BUCKET_CONTROLS, False, kind="text", label="Wake-on-LAN MAC"),
-    # metadata_sources — Attribut-Anreicherung aus separater Entity
-    _r("title_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Titel"),
-    _r("app_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="App"),
-    _r("source_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Quelle/Input"),
-    _r("volume_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Lautstärke"),
-    _r("mute_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Mute"),
-    _r("artist_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Artist"),
-    _r("album_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Album"),
-    _r("game_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Spiel"),
+    # metadata_sources — standardmäßig ABGELEITET aus den primary_state-Attributen
+    # (derive_attr). Nur bei explizitem metadata_sources-Override eigene Entity.
+    _r("title_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Titel", derive_from="primary_state", derive_attr="media_title"),
+    _r("app_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="App", derive_from="primary_state", derive_attr="app_id"),
+    _r("source_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Quelle/Input", derive_from="primary_state", derive_attr="source"),
+    _r("volume_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Lautstärke", derive_from="primary_state", derive_attr="volume_level"),
+    _r("mute_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Mute", derive_from="primary_state", derive_attr="is_volume_muted"),
+    _r("artist_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Artist", derive_from="primary_state", derive_attr="media_artist"),
+    _r("album_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Album", derive_from="primary_state", derive_attr="media_album_name"),
+    _r("game_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Spiel", derive_from="primary_state", derive_attr="media_title"),
     _r("companion_media", ("media_player",), BUCKET_METADATA, False, label="Companion Player"),
     _r("network_tracker", ("device_tracker",), BUCKET_METADATA, False, label="Companion Tracker"),
 )}
@@ -148,9 +155,21 @@ class AtomicClassSpec:
     default_roles: tuple[str, ...] = ()
     # Reihenfolge für den primären Messwert (nur numeric).
     numeric_roles: tuple[str, ...] = ()
+    # v2.1: klassenspezifische Rollen-Allowlists (Builder rendert NUR diese).
+    optional_roles: tuple[str, ...] = ()
+    control_roles: tuple[str, ...] = ()
+    metadata_override_roles: tuple[str, ...] = ()
+    # primary_state (u. a.) pro Klasse auf sinnvolle Domains einengen.
+    role_domain_overrides: dict[str, tuple[str, ...]] = field(default_factory=dict)
     beta: bool = False
     icon: str = "mdi:shape"
     label: str = ""
+
+    def domains_for(self, role: str) -> tuple[str, ...]:
+        if role in self.role_domain_overrides:
+            return self.role_domain_overrides[role]
+        spec = ROLE_CATALOG.get(role)
+        return spec.domains if spec else ()
 
 
 def _cls(spec: AtomicClassSpec) -> AtomicClassSpec:
@@ -166,7 +185,11 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         required_roles=("primary_state",), required_mode="all",
         fail_safe=FAIL_SAFE_HOLD_LAST,
         extra_attributes=("media_state", "current_app", "source", "media_title", "volume_level", "is_volume_muted", "watt", "network_online"),
-        default_roles=("primary_state", "power_meter", "network_presence"),
+        default_roles=("primary_state",),
+        optional_roles=("power_meter", "network_presence", "energy_meter"),
+        control_roles=("power_switch", "remote_control", "wake_button", "wake_mac", "network_switch"),
+        metadata_override_roles=("title_source", "app_source", "source_source", "volume_source", "mute_source", "companion_media", "network_tracker"),
+        role_domain_overrides={"primary_state": ("media_player",)},
         icon="mdi:television", label="Media Device",
     ),
     AtomicClassSpec(
@@ -177,7 +200,11 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         required_roles=("primary_state",), required_mode="all",
         fail_safe=FAIL_SAFE_HOLD_LAST,
         extra_attributes=("source", "sound_mode", "volume", "muted", "track", "artist", "album"),
-        default_roles=("primary_state", "power_meter"),
+        default_roles=("primary_state",),
+        optional_roles=("power_meter", "network_presence"),
+        control_roles=("power_switch",),
+        metadata_override_roles=("title_source", "source_source", "volume_source", "mute_source", "artist_source", "album_source"),
+        role_domain_overrides={"primary_state": ("media_player",)},
         icon="mdi:speaker", label="Audio Endpoint",
     ),
     AtomicClassSpec(
@@ -188,7 +215,11 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         required_roles=("status_source", "network_presence"), required_mode="any",
         fail_safe=FAIL_SAFE_OFF,
         extra_attributes=("online", "status", "title", "watt", "last_online"),
-        default_roles=("status_source", "network_presence", "power_meter"),
+        default_roles=("status_source", "network_presence"),
+        optional_roles=("power_meter", "energy_meter"),
+        control_roles=("power_switch", "wake_button", "wake_mac", "network_switch", "remote_control"),
+        metadata_override_roles=("title_source", "game_source"),
+        role_domain_overrides={"network_presence": ("device_tracker", "binary_sensor"), "status_source": ("sensor", "binary_sensor")},
         icon="mdi:gamepad-variant", label="Console",
     ),
     AtomicClassSpec(
@@ -201,6 +232,9 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         extra_attributes=("switch_on", "active", "watt", "energy"),
         stateful=False,
         default_roles=("primary_state", "power_meter"),
+        optional_roles=("power_meter", "energy_meter", "current_meter", "voltage_meter", "activity_source"),
+        control_roles=("power_switch", "network_switch"),
+        role_domain_overrides={"primary_state": ("switch",)},
         icon="mdi:power-socket-de", label="Power Device",
     ),
     AtomicClassSpec(
@@ -211,7 +245,8 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         required_roles=("open_contact",), required_mode="all",
         fail_safe=FAIL_SAFE_OPEN,
         extra_attributes=("open", "tilted", "contact_state", "battery"),
-        default_roles=("open_contact", "tilt_contact"),
+        default_roles=("open_contact",),
+        optional_roles=("tilt_contact", "battery_source"),
         icon="mdi:window-open-variant", label="Opening",
     ),
     AtomicClassSpec(
@@ -226,6 +261,7 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         stateful=False,
         numeric_roles=("temperature_source", "lux_source", "humidity_source", "pressure_source", "value_source"),
         default_roles=("temperature_source", "humidity_source"),
+        optional_roles=("humidity_source", "pressure_source", "lux_source", "battery_source"),
         icon="mdi:thermometer", label="Environment",
     ),
     AtomicClassSpec(
@@ -247,7 +283,8 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         required_roles=("cover_source",), required_mode="all",
         fail_safe=FAIL_SAFE_HOLD_LAST,
         extra_attributes=("position", "moving", "calibrated"),
-        default_roles=("cover_source", "position_source"),
+        default_roles=("cover_source",),
+        optional_roles=("position_source", "battery_source"),
         icon="mdi:window-shutter", label="Cover",
     ),
     AtomicClassSpec(
@@ -259,6 +296,7 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
         fail_safe=FAIL_SAFE_HOLD_LAST,
         extra_attributes=("current_temperature", "target_temperature", "hvac_action", "hvac_mode"),
         default_roles=("climate_source",),
+        optional_roles=("battery_source",),
         icon="mdi:thermostat", label="Climate",
     ),
     AtomicClassSpec(

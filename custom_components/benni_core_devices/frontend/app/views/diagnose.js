@@ -86,8 +86,8 @@ function detailCard(row) {
         ${missing ? `<div style="margin-top:10px"><div class="k">Fehlende Pflichtrollen</div><div class="row" style="margin-top:6px">${missing}</div></div>` : ""}
         ${reasons ? `<div style="margin-top:10px"><div class="k">Degraded</div><div class="row" style="margin-top:6px">${reasons}</div></div>` : ""}
         ${sourceWarn ? `<div class="warnbox" style="margin-top:10px">Problematische Quellen:<ul>${sourceWarn}</ul></div>` : ""}
-        <h2 style="margin-top:16px">Slots</h2>
-        ${slotRows || `<div class="muted">Keine belegten Slots.</div>`}
+        <h2 style="margin-top:16px">Quellen</h2>
+        ${slotRows || `<div class="muted">Keine belegten Quellen.</div>`}
         <h2 style="margin-top:16px">Versorgung / Abhängigkeiten</h2>
         <div class="kv"><span class="k">consumes</span><span class="v">${consumes || "—"}</span></div>
         <div style="margin-top:8px"><div class="k">Verwendet in Combineds</div><div class="row" style="margin-top:6px">${consumedBy || `<span class="muted">—</span>`}</div></div>

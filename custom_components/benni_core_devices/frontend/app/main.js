@@ -133,7 +133,7 @@ class BcdApp extends HTMLElement {
         const devices = status.devices || [];
         const combineds = status.combineds || [];
         const missing = devices.reduce(
-          (n, d) => n + ((d.attrs && d.attrs.missing_sources) || []).length, 0);
+          (n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
         const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
         const ready = devices.filter(
           (d) => d.attrs && d.attrs.atomic_quality === "ok").length;

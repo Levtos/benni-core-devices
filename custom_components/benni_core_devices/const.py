@@ -22,27 +22,70 @@ DATA_VIEW_STATIC: Final = "_view_static_registered"
 DATA_VIEW_PANEL: Final = "_view_panel_registered"
 
 
-class DeviceType(str, Enum):
-    """Supported physical device profiles."""
+class AtomicClass(str, Enum):
+    """Rollenbasierte Geräteklassen (v2). Ersetzt das alte ``device_type``.
 
-    TV = "tv"
-    AV_RECEIVER = "av_receiver"
-    CONSOLE = "console"
-    SPEAKER = "speaker"
-    PLUG = "plug"
+    Die Unterart innerhalb einer Klasse heißt ``variant`` (NIEMALS ``profile`` —
+    ``profile`` ist die Route benni/eltern).
+    """
+
+    MEDIA_DEVICE = "media_device"
+    AUDIO_ENDPOINT = "audio_endpoint"
+    CONSOLE_DEVICE = "console_device"
+    POWER_DEVICE = "power_device"
+    OPENING = "opening"
+    ENVIRONMENT = "environment"
     LIGHT = "light"
     COVER = "cover"
-    CLIMATE = "climate"
-    SENSOR_WRAPPER = "sensor_wrapper"
+    CLIMATE_DEVICE = "climate_device"
+    GENERIC_EXPERT = "generic_expert"
+    # Nur vorbereitet (Beta/Expert, keine Tiefe):
+    PRESENCE_PERSON = "presence_person"
+    MOBILE_DASHBOARD = "mobile_dashboard"
+    NETWORK_SERVICE = "network_service"
 
 
-DEVICE_TYPE_SLUGS: Final[tuple[str, ...]] = tuple(t.value for t in DeviceType)
+ATOMIC_CLASS_SLUGS: Final[tuple[str, ...]] = tuple(c.value for c in AtomicClass)
 
-# Config / options keys
-CONF_DEVICE_TYPE: Final[str] = "device_type"
+# Power-Modelle (steuern den Compute-Pfad im Coordinator/logic).
+POWER_MODEL_INTEGRATION_WATT_STICKY: Final[str] = "integration_watt_sticky"
+POWER_MODEL_PASSTHROUGH: Final[str] = "passthrough_state"
+POWER_MODEL_NUMERIC: Final[str] = "numeric"
+
+# Fail-Safe-Modi (greifen nur, wenn keine Quelle frisch ist).
+FAIL_SAFE_OFF: Final[str] = "off"
+FAIL_SAFE_OPEN: Final[str] = "open"
+FAIL_SAFE_HOLD_LAST: Final[str] = "hold_last"
+FAIL_SAFE_UNKNOWN: Final[str] = "unknown"
+FAIL_SAFE_CHOICES: Final[tuple[str, ...]] = (
+    FAIL_SAFE_OFF,
+    FAIL_SAFE_OPEN,
+    FAIL_SAFE_HOLD_LAST,
+    FAIL_SAFE_UNKNOWN,
+)
+
+# Availability-Regeln.
+AVAILABILITY_ANY_REQUIRED_OR_ANY_SOURCE: Final[str] = "any_required_or_any_source"
+DEFAULT_AVAILABILITY_RULE: Final[str] = AVAILABILITY_ANY_REQUIRED_OR_ANY_SOURCE
+
+# Config / options keys (v2)
+CONF_ATOMIC_CLASS: Final[str] = "atomic_class"
+CONF_VARIANT: Final[str] = "variant"
+CONF_CONTROLS: Final[str] = "controls"
+CONF_METADATA_SOURCES: Final[str] = "metadata_sources"
+CONF_DIAGNOSTICS: Final[str] = "diagnostics"
+CONF_FAIL_SAFE: Final[str] = "fail_safe"
+CONF_AVAILABILITY_RULE: Final[str] = "availability_rule"
+CONF_REQUIRED: Final[str] = "required"
+CONF_VALUE: Final[str] = "value"
+
 CONF_SLUG: Final[str] = "slug"
 CONF_DISPLAY_NAME: Final[str] = "display_name"
 CONF_PROFILE: Final[str] = "profile"
+
+# Legacy (v1) — nur noch als Konstanten erhalten, nicht mehr aktiv genutzt.
+# Verhindert Import-Brüche; das v2-Modell arbeitet rollenbasiert.
+CONF_DEVICE_TYPE: Final[str] = "device_type"
 
 PROFILE_BENNI: Final = "benni"
 PROFILE_ELTERN: Final = "eltern"

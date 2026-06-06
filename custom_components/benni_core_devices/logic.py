@@ -21,6 +21,10 @@ from .const import (
     BOOT_INITIAL_PHASE_SECONDS,
     DEFAULT_STICKY_HOLD_SECONDS,
     DEFAULT_WATT_THRESHOLD_ON,
+    FAIL_SAFE_HOLD_LAST,
+    FAIL_SAFE_OFF,
+    FAIL_SAFE_OPEN,
+    FAIL_SAFE_UNKNOWN,
     PowerSource,
     PowerState,
 )
@@ -52,20 +56,15 @@ class DeviceConfig:
 
     slug: str
     display_name: str
-    device_type: str
+    device_type: str  # v2: generisches Label (atomic_class) — Power-Regeln nutzen es nicht
     watt_threshold_on: int = DEFAULT_WATT_THRESHOLD_ON
     watt_buckets: tuple["WattBucket", ...] = ()
     sticky_hold_seconds: int = DEFAULT_STICKY_HOLD_SECONDS
     area_id: str | None = None
-    # Slot-Schlüssel die der User konfiguriert hat (für Reading-Lookup)
+    # Konfigurierte Rollen/Slots (für available-Auswertung)
     configured_slots: tuple[str, ...] = ()
-    # Rich-Atomic-Rework (additiv, beeinflusst die Power-Regeln NICHT):
-    # Slot-Key → Entity-ID (für Slot-Diagnose + Attribut-Export).
-    slot_entities: dict[str, str] = field(default_factory=dict)
-    # Aktivierte Felder (auch ohne Entity → für missing_sources-Warnung).
-    fields: tuple[str, ...] = ()
-    # Wake-on-LAN MAC (Text-Slot, keine Entity).
-    wake_mac: str | None = None
+    # Fail-Safe-Modus für passthrough/numeric (greift nur wenn keine Quelle frisch).
+    fail_safe: str = FAIL_SAFE_HOLD_LAST
 
 
 @dataclass(frozen=True)
@@ -115,11 +114,13 @@ class Override:
 
 @dataclass(frozen=True)
 class DevicePersisted:
-    """Persistenter Zustand pro Device (für Sticky-Hold + Override)."""
+    """Persistenter Zustand pro Device (für Sticky-Hold + Override + Hold-Last)."""
 
     last_powered: bool | None
     last_powered_change: datetime | None
     override: Override | None
+    # v2: letzter gültiger State (für fail_safe=hold_last bei passthrough/numeric).
+    last_state: str | None = None
 
 
 @dataclass(frozen=True)
@@ -148,6 +149,8 @@ class DeviceResult:
     watt: float | None
     raw_state: str | None  # raw value des state_slots
     extra: dict[str, Any] = field(default_factory=dict)
+    # v2: True wenn keine Quelle frisch war und der fail_safe-Wert greift.
+    fail_safe_active: bool = False
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -354,6 +357,134 @@ def _sticky_age_seconds(persisted: DevicePersisted, now: datetime) -> float | No
 def is_boot_phase(boot_start: datetime, now: datetime) -> bool:
     """R-DC-09: Erste BOOT_INITIAL_PHASE_SECONDS nach Modul-Setup."""
     return (now - boot_start) < timedelta(seconds=BOOT_INITIAL_PHASE_SECONDS)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# v2: passthrough_state + numeric (KEINE Watt/Sticky-Mechanik)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _apply_fail_safe(mode: str, persisted: DevicePersisted) -> tuple[str, bool | None]:
+    """Fail-Safe-Wert wenn keine Quelle frisch ist → (state, powered)."""
+    if mode == FAIL_SAFE_OFF:
+        return ("off", False)
+    if mode == FAIL_SAFE_OPEN:
+        return ("open", True)
+    if mode == FAIL_SAFE_HOLD_LAST:
+        return (persisted.last_state or "unknown", persisted.last_powered)
+    # FAIL_SAFE_UNKNOWN + Default
+    return ("unknown", None)
+
+
+def _active_override(persisted: DevicePersisted, now: datetime) -> Override | None:
+    o = persisted.override
+    if o is not None and (o.expires_at is None or now < o.expires_at):
+        return o
+    return None
+
+
+def compute_passthrough(
+    config: DeviceConfig,
+    inputs: DeviceInputs,
+    persisted: DevicePersisted,
+    now: datetime,
+) -> DeviceResult:
+    """Passthrough-State: state = raw value der state_role-Quelle.
+
+    Keine Watt-/Sticky-Mechanik. ``fail_safe`` greift nur, wenn keine Quelle
+    frisch ist. Override (R-DC-07) bleibt wirksam.
+    """
+    available = _compute_available(inputs, now)
+    state_reading = inputs.slots.get(inputs.state_slot) if inputs.state_slot else None
+
+    override = _active_override(persisted, now)
+    if override is not None:
+        state = (
+            override.power_state
+            or _compute_state(state_reading, override.powered, inputs.state_slot)
+        )
+        return DeviceResult(
+            state=state, powered=override.powered,
+            power_state=override.power_state or PowerState.UNKNOWN.value,
+            power_source=PowerSource.OVERRIDE.value, available=available,
+            last_powered_change=persisted.last_powered_change, override_active=True,
+            watt_disagrees=False, watt=None,
+            raw_state=state_reading.value if state_reading else None,
+            extra=state_reading.attributes if state_reading else {},
+        )
+
+    fresh = _is_fresh(state_reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    if fresh and state_reading is not None and state_reading.value is not None:
+        state = state_reading.value
+        powered = _as_bool(state)
+        source = PowerSource.INTEGRATION
+        fail_safe_active = False
+        extra = state_reading.attributes
+        raw = state_reading.value
+    else:
+        state, powered = _apply_fail_safe(config.fail_safe, persisted)
+        source = (
+            PowerSource.STICKY_HOLD
+            if config.fail_safe == FAIL_SAFE_HOLD_LAST
+            else PowerSource.NONE
+        )
+        fail_safe_active = True
+        extra = {}
+        raw = None
+
+    new_last_change = persisted.last_powered_change
+    if powered != persisted.last_powered:
+        new_last_change = now
+
+    return DeviceResult(
+        state=state, powered=powered, power_state=PowerState.UNKNOWN.value,
+        power_source=source.value, available=available,
+        last_powered_change=new_last_change, override_active=False,
+        watt_disagrees=False, watt=None, raw_state=raw, extra=extra,
+        fail_safe_active=fail_safe_active,
+    )
+
+
+def compute_numeric(
+    config: DeviceConfig,
+    inputs: DeviceInputs,
+    persisted: DevicePersisted,
+    now: datetime,
+) -> DeviceResult:
+    """Numeric: state = primärer Messwert (state_role). Übrige Werte → Attribute."""
+    available = _compute_available(inputs, now)
+    reading = inputs.slots.get(inputs.state_slot) if inputs.state_slot else None
+
+    override = _active_override(persisted, now)
+    if override is not None:
+        return DeviceResult(
+            state=override.power_state or "override", powered=override.powered,
+            power_state=override.power_state or PowerState.UNKNOWN.value,
+            power_source=PowerSource.OVERRIDE.value, available=available,
+            last_powered_change=persisted.last_powered_change, override_active=True,
+            watt_disagrees=False, watt=reading.numeric if reading else None,
+            raw_state=reading.value if reading else None,
+            extra=reading.attributes if reading else {},
+        )
+
+    fresh = _is_fresh(reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    if fresh and reading is not None and reading.value is not None:
+        state = reading.value
+        fail_safe_active = False
+        extra = reading.attributes
+    else:
+        state, _ = _apply_fail_safe(config.fail_safe, persisted)
+        fail_safe_active = True
+        extra = {}
+
+    return DeviceResult(
+        state=state, powered=None, power_state=PowerState.UNKNOWN.value,
+        power_source=PowerSource.NONE.value, available=available,
+        last_powered_change=persisted.last_powered_change, override_active=False,
+        watt_disagrees=False, watt=reading.numeric if reading else None,
+        raw_state=reading.value if reading else None, extra=extra,
+        fail_safe_active=fail_safe_active,
+    )
 
 
 # ─────────────────────────────────────────────────────────────────────────────

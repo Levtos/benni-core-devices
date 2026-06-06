@@ -7,16 +7,16 @@ function newState() {
 function reportCard(result) {
   if (!result) return "";
   const rows = (result.report || []).map((r) => {
-    const sev = r.derived_sources.length ? "err" : (r.missing_entities.length ? "warn" : "ok");
+    const missing = r.missing_required || [];
+    const sev = r.derived_sources.length ? "err" : (missing.length ? "warn" : "ok");
     const issues = [
       ...r.derived_sources.map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
-      r.missing_entities.length ? `<div class="warnbox" style="margin-top:4px">Leere Slots: ${esc(r.missing_entities.join(", "))}</div>` : "",
-      r.unknown_slots.length ? `<div class="warnbox" style="margin-top:4px">Unbekannte Slots: ${esc(r.unknown_slots.join(", "))}</div>` : "",
+      missing.length ? `<div class="warnbox" style="margin-top:4px">Pflichtrollen fehlen: ${esc(missing.join(", "))}</div>` : "",
     ].join("");
     return `<tr>
       <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
       <td class="mono">${esc(r.entity_id)}</td>
-      <td>${esc(r.device_type)}</td>
+      <td>${esc(r.atomic_class)}</td>
       <td>${issues || `<span class="muted">—</span>`}</td>
     </tr>`;
   }).join("");
@@ -73,7 +73,7 @@ export function render(root, ctx) {
     <div class="split">
       <div class="card">
         <h2>Bulk Import</h2>
-        <textarea id="bulk" spellcheck="false" placeholder="- slug: tv&#10;  device_type: tv&#10;  integration_entity: media_player.living_lgtv">${esc(st.bulk)}</textarea>
+        <textarea id="bulk" spellcheck="false" placeholder="- slug: tv&#10;  atomic_class: media_device&#10;  variant: tv&#10;  sources:&#10;    - role: primary_state&#10;      entity: media_player.living_lgtv">${esc(st.bulk)}</textarea>
         <div class="row" style="margin-top:10px">
           <button class="btn" type="button" id="dryRun">Dry Run / Vorschau</button>
           <button class="btn primary" type="button" id="doImport">Import ausführen</button>

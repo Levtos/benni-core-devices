@@ -167,3 +167,31 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
 
 async def _async_reload_on_options(hass: HomeAssistant, entry: ConfigEntry) -> None:
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Migration auf v2 (rollenbasiert).
+
+    Bewusst Sledgehammer (§9): es gibt keine produktive v1-Config. Alte flache
+    Devices ohne ``atomic_class`` werden verworfen; die Entry-Version wird auf 2
+    gehoben. Combineds/Light-Groups bleiben erhalten.
+    """
+    if entry.version >= 2:
+        return True
+
+    from .const import CONF_ATOMIC_CLASS, CONF_DEVICES
+
+    options = dict(entry.options)
+    raw_devices = options.get(CONF_DEVICES)
+    if isinstance(raw_devices, dict):
+        options[CONF_DEVICES] = {
+            slug: conf
+            for slug, conf in raw_devices.items()
+            if isinstance(conf, dict) and conf.get(CONF_ATOMIC_CLASS)
+        }
+    else:
+        options[CONF_DEVICES] = {}
+
+    hass.config_entries.async_update_entry(entry, options=options, version=2)
+    _LOGGER.info("Migrated %s entry to v2 (role-based)", DOMAIN)
+    return True

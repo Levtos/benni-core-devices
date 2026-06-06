@@ -1,5 +1,43 @@
 # Changelog
 
+## 0.3.0 — Rollenbasierter v2-Rework (Hard-Rework)
+
+Harter Rework: `device_type` + flache Slots → `atomic_class` + `variant` +
+`sources[]` / `controls[]` / `metadata_sources[]` + `diagnostics`. Keine
+Rückwärtskompatibilität nötig (Integration nicht produktiv).
+
+### Invarianten gewahrt
+- `logic.compute_device` (R-DC-01..09, Override, Sticky, Watt-Buckets,
+  watt_disagrees, Boot-Phase) **semantisch unverändert** — nur die Input-
+  Auflösung wechselt von festen Keys auf Rollen.
+- `combined.py` unverändert. `classify_source_entity` blockt weiter
+  `*_atomic`/`*_combined`/`*_gate`/eigene Prefixe. Object-ID-Prefixe gleich.
+
+### Neu
+- `device_types.py` → `ROLE_CATALOG` (sources/controls/metadata, compute_relevant)
+  + `ATOMIC_CLASSES` (media_device, audio_endpoint, console_device, power_device,
+  opening, environment, light, cover, climate_device, generic_expert + 3 Beta) mit
+  `power_model`, `integration_roles`, `required_roles`/`required_mode`, `fail_safe`.
+- `DeviceConfigV2` + `SourceBinding` + Rollen-Auflösung (integration/state/watt/
+  numeric role, `missing_required`).
+- `logic.compute_passthrough` + `compute_numeric` + `fail_safe`
+  (off/open/hold_last/unknown) + `last_state`-Persistenz + `fail_safe_active`.
+- `attributes.py` rollenbasiert: `source_roles/entities/states/available`,
+  `missing_required`, `degraded(_reason)`, `atomic_quality`, `consumes`,
+  `fail_safe_active` + per-Klasse-`extra_attributes`. Metadaten-Default aus
+  `primary_state`-Attributen, separate `metadata_sources` möglich (z. B. PS5-Title).
+- Coordinator wählt Compute-Pfad über `power_model`.
+- WebSocket-Katalog liefert `atomic_classes` + `role_catalog`; `set_device`/Import
+  v2 (class/variant/sources/controls/metadata); Dry-Run-Report mit `missing_required`.
+- Panel: „Was willst du bauen?" (Klassen-Kacheln → Variante → Pflichtquellen →
+  Optional/Controls/Metadaten/Erweitert), Diagnose mit „Missing Required".
+- Entry-Version 2 + minimaler `async_migrate_entry` (kein Migrator; verwirft alte
+  flache Devices, behält Combineds/Groups).
+
+### Hinweise
+- Alte `CONF_*_ENTITY`-Konstanten bleiben als isolierte Legacy-Konstanten in
+  `const.py` (ungenutzt) — verhindert Import-Brüche.
+
 ## 0.2.0 — Rich Atomic Contract, Diagnose & Combined Builder v0
 
 Rework (Weg C). Additiv, keine Breaking Changes — bestehende Device-Configs und

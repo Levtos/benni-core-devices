@@ -15,10 +15,10 @@ function rows(status) {
     out.push({
       kind: "device", key: `device:${d.slug}`, slug: d.slug,
       name: a.display_name || d.slug,
-      type: (d.config && d.config.device_type) || "device",
+      type: (d.config && d.config.atomic_class) || "device",
       state: d.state,
       available: a.available ? "available" : "unavailable",
-      missing: (a.missing_sources || []).length,
+      missing: (a.missing_required || []).length,
       reason: (a.degraded_reason || []).join(", ") || "—",
       severity: qualityKind(quality),
       data: d,
@@ -62,14 +62,14 @@ function detailCard(row) {
   const d = row.data;
   const a = d.attrs || {};
   if (row.kind === "device") {
-    const slotEntities = a.slot_entities || {};
-    const slotStates = a.slot_states || {};
-    const slotAvail = a.slot_available || {};
+    const slotEntities = a.source_entities || {};
+    const slotStates = a.source_states || {};
+    const slotAvail = a.source_available || {};
     const slotRows = Object.keys(slotEntities).map((k) => `
       <div class="kv"><span class="k">${esc(k)}</span>
         <span class="v">${chip(slotAvail[k] ? "ok" : "err", esc(slotStates[k] ?? "—"))}
         <span class="mono">${esc(slotEntities[k])}</span></span></div>`).join("");
-    const missing = (a.missing_sources || []).map((m) => chip("warn", m)).join(" ");
+    const missing = (a.missing_required || []).map((m) => chip("warn", m)).join(" ");
     const reasons = (a.degraded_reason || []).map((r) => chip("warn", r)).join(" ");
     const consumes = (a.consumes || []).map((c) => `<span class="mono">${esc(c)}</span>`).join("<br>");
     const consumedBy = (d.consumed_by || []).map((c) => chip("accent", c)).join(" ");
@@ -83,7 +83,7 @@ function detailCard(row) {
         <div class="kv"><span class="k">Power state</span><span class="v">${esc(a.power_state)}</span></div>
         <div class="kv"><span class="k">Source</span><span class="v">${esc(a.power_source)}</span></div>
         <div class="kv"><span class="k">watt_disagrees</span><span class="v">${esc(a.watt_disagrees)}</span></div>
-        ${missing ? `<div style="margin-top:10px"><div class="k">Fehlende Slots</div><div class="row" style="margin-top:6px">${missing}</div></div>` : ""}
+        ${missing ? `<div style="margin-top:10px"><div class="k">Fehlende Pflichtrollen</div><div class="row" style="margin-top:6px">${missing}</div></div>` : ""}
         ${reasons ? `<div style="margin-top:10px"><div class="k">Degraded</div><div class="row" style="margin-top:6px">${reasons}</div></div>` : ""}
         ${sourceWarn ? `<div class="warnbox" style="margin-top:10px">Problematische Quellen:<ul>${sourceWarn}</ul></div>` : ""}
         <h2 style="margin-top:16px">Slots</h2>
@@ -143,7 +143,7 @@ export function render(root, ctx) {
   const all = rows(status).sort((a, b) =>
     (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.name.localeCompare(b.name));
   const filter = root._filter || "all";
-  const missing = devices.reduce((n, d) => n + ((d.attrs && d.attrs.missing_sources) || []).length, 0);
+  const missing = devices.reduce((n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
   const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
   const ready = all.filter((r) => r.severity === "ok").length;
   const errors = all.filter((r) => r.severity === "err").length;
@@ -162,7 +162,7 @@ export function render(root, ctx) {
     <div class="stats">
       <div class="stat accent"><div class="n">${devices.length}</div><div class="l">Devices</div></div>
       <div class="stat info"><div class="n">${combineds.length}</div><div class="l">Combineds</div></div>
-      <div class="stat ${missing ? "warn" : "ok"}"><div class="n">${missing}</div><div class="l">Missing Sources</div></div>
+      <div class="stat ${missing ? "warn" : "ok"}"><div class="n">${missing}</div><div class="l">Missing Required</div></div>
       <div class="stat ${degraded ? "warn" : "ok"}"><div class="n">${degraded}</div><div class="l">Degraded</div></div>
       <div class="stat ok"><div class="n">${ready}</div><div class="l">Ready</div></div>
       <div class="stat ${errors ? "err" : "ok"}"><div class="n">${errors}</div><div class="l">Fehler</div></div>

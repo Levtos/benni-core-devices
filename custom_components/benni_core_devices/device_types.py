@@ -1,358 +1,483 @@
-"""Device-Typ-Profile + globaler Slot-Katalog (LH §6, v0.2-Redesign).
+"""Rollen- und Klassenkatalog für Benni Core · Devices v2 (HA-frei).
 
-Neues Modell (Feld-Maske):
-- Es gibt EINEN globalen Slot-Katalog (`SLOT_CATALOG`) mit allen möglichen
-  Feldern und breiten (nicht typ-gebundenen) Entity-Domains.
-- Der Config-Flow lässt den User pro Device frei wählen, welche Felder er
-  belegen will (Multi-Select). Gewählte Felder werden zu Pflicht-Pickern.
-- Der `device_type` steuert nur noch die Attribut-Semantik: welcher Slot die
-  Integration-Truth liefert (R-DC-01), welcher den raw-State trägt, welche
-  Extra-Attribute am Haupt-Sensor erscheinen — plus die Default-Vorauswahl
-  der Felder in der Maske.
+Ersetzt das alte ``device_type`` + flache ``SLOT_CATALOG``-Modell durch:
+- ``ROLE_CATALOG``     — globaler Rollenkatalog (sources/controls/metadata)
+- ``ATOMIC_CLASSES``   — fachliche Geräteklassen mit ``variant``-Liste + power_model
+- ``SourceBinding`` / ``DeviceConfigV2`` — persistiertes Conf-Modell (Rollen)
+- Auflösungs-Helper, die der Coordinator nutzt, um Rollen → Compute-Inputs zu
+  mappen (``logic.DeviceConfig`` + ``DeviceInputs`` bleiben unverändert).
 
-HA-frei — wird im Config-Flow und in der Logik benutzt.
+HA-frei und vollständig in pytest testbar. ``profile`` ist NICHT Teil dieses
+Modells — die Geräte-Unterart heißt ``variant``.
 """
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any, Final
 
 from .const import (
-    CONF_CLIMATE_ENTITY,
-    CONF_COMPANION_MEDIA_PLAYER,
-    CONF_COMPANION_TRACKER,
-    CONF_COVER_ENTITY,
-    CONF_CURRENT_SENSOR,
-    CONF_DEVICE_TYPE,
-    CONF_ENERGY_SENSOR,
-    CONF_INTEGRATION_ENTITY,
-    CONF_LIGHT_ENTITY,
-    CONF_NETWORK_SWITCH_ENTITY,
-    CONF_POSITION_ENTITY,
-    CONF_POWER_ENTITY,
-    CONF_REMOTE_ENTITY,
+    AVAILABILITY_ANY_REQUIRED_OR_ANY_SOURCE,
+    CONF_ATOMIC_CLASS,
+    CONF_AVAILABILITY_RULE,
+    CONF_CONTROLS,
+    CONF_DISPLAY_NAME,
+    CONF_ENTITY,
+    CONF_EXPOSE_SECONDARY_SENSORS,
+    CONF_FAIL_SAFE,
+    CONF_METADATA_SOURCES,
+    CONF_REQUIRED,
+    CONF_ROLE,
     CONF_SLUG,
-    CONF_STATUS_ENTITY,
-    CONF_SWITCH_ENTITY,
-    CONF_TITLE_ENTITY,
-    CONF_VALUE_ENTITY,
-    CONF_VOLTAGE_SENSOR,
-    CONF_WAKE_BUTTON_ENTITY,
-    CONF_WAKE_MAC,
-    CONF_WATT_SENSOR,
-    CONF_WIFI_SENSOR,
-    DeviceType,
+    CONF_SOURCES,
+    CONF_STICKY_HOLD_SECONDS,
+    CONF_VALUE,
+    CONF_VARIANT,
+    CONF_WATT_BUCKETS,
+    CONF_WATT_THRESHOLD_ON,
+    DEFAULT_AVAILABILITY_RULE,
+    DEFAULT_STICKY_HOLD_SECONDS,
+    DEFAULT_WATT_THRESHOLD_ON,
+    FAIL_SAFE_HOLD_LAST,
+    FAIL_SAFE_OFF,
+    FAIL_SAFE_OPEN,
+    FAIL_SAFE_UNKNOWN,
+    POWER_MODEL_INTEGRATION_WATT_STICKY,
+    POWER_MODEL_NUMERIC,
+    POWER_MODEL_PASSTHROUGH,
+    AtomicClass,
 )
 
-# UX-Fachbereiche für den Atomic Builder (LH §7.2). Slots werden danach
-# gruppiert dargestellt — keine endlose Checkbox-Liste mehr.
-SLOT_GROUP_BASICS: Final[str] = "basics"
-SLOT_GROUP_POWER: Final[str] = "power"
-SLOT_GROUP_MEDIA_NETWORK: Final[str] = "media_network"
-SLOT_GROUP_MEASUREMENTS: Final[str] = "measurements"
-SLOT_GROUP_ADVANCED: Final[str] = "advanced"
+# Buckets, in die Rollen einsortiert sind.
+BUCKET_SOURCES: Final[str] = "sources"
+BUCKET_CONTROLS: Final[str] = "controls"
+BUCKET_METADATA: Final[str] = "metadata_sources"
 
-SLOT_GROUP_ORDER: Final[tuple[str, ...]] = (
-    SLOT_GROUP_BASICS,
-    SLOT_GROUP_POWER,
-    SLOT_GROUP_MEDIA_NETWORK,
-    SLOT_GROUP_MEASUREMENTS,
-    SLOT_GROUP_ADVANCED,
-)
 
-SLOT_GROUP_LABELS: Final[dict[str, str]] = {
-    SLOT_GROUP_BASICS: "Basics",
-    SLOT_GROUP_POWER: "Power & Fallbacks",
-    SLOT_GROUP_MEDIA_NETWORK: "Media & Network",
-    SLOT_GROUP_MEASUREMENTS: "Measurements",
-    SLOT_GROUP_ADVANCED: "Advanced",
-}
+# ─────────────────────────────────────────────────────────────────────────────
+# ROLLEN-KATALOG (§6)
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
-class SlotSpec:
-    """Definition eines Slots im globalen Katalog.
-
-    `domains` ist ein breiter, nicht typ-gebundener Filter für den
-    Entity-Picker. Bewusst großzügig — der User soll jede plausible Entity
-    wählen können, nicht nur bestehende Atomics.
-
-    `group` ordnet den Slot einem UX-Fachbereich im Atomic Builder zu.
-    `role` ist die fachliche Rolle, die der Slot im Atomic spielt (für das
-    `slot_roles`-Attribut). `kind` unterscheidet Entity-Slots von Text-Slots
-    (z. B. `wake_mac`), die NICHT als HA-Entity gelesen werden dürfen.
-    """
-
+class RoleSpec:
     key: str
     domains: tuple[str, ...]
-    description: str = ""
-    group: str = SLOT_GROUP_BASICS
-    role: str = ""
+    bucket: str
+    compute_relevant: bool = False
     kind: str = "entity"  # "entity" | "text"
+    label: str = ""
+
+
+def _r(key, domains, bucket, compute_relevant=False, kind="entity", label=""):
+    return RoleSpec(key, domains, bucket, compute_relevant, kind, label or key)
+
+
+ROLE_CATALOG: Final[dict[str, RoleSpec]] = {s.key: s for s in (
+    # sources — compute-/state-relevant
+    _r("primary_state", ("media_player", "light", "cover", "climate", "switch", "binary_sensor", "sensor"), BUCKET_SOURCES, True, label="Hauptzustand"),
+    _r("power_meter", ("sensor",), BUCKET_SOURCES, True, label="Watt-Messung"),
+    _r("status_source", ("sensor", "binary_sensor"), BUCKET_SOURCES, True, label="Status"),
+    _r("network_presence", ("binary_sensor", "device_tracker"), BUCKET_SOURCES, True, label="Netzwerk-Präsenz"),
+    _r("activity_source", ("binary_sensor", "sensor"), BUCKET_SOURCES, True, label="Aktivität"),
+    _r("open_contact", ("binary_sensor",), BUCKET_SOURCES, True, label="Öffnungskontakt"),
+    _r("tilt_contact", ("binary_sensor",), BUCKET_SOURCES, True, label="Kipp-Kontakt"),
+    _r("light_source", ("light",), BUCKET_SOURCES, True, label="Licht"),
+    _r("cover_source", ("cover",), BUCKET_SOURCES, True, label="Rollo / Cover"),
+    _r("position_source", ("sensor", "cover"), BUCKET_SOURCES, False, label="Position"),
+    _r("climate_source", ("climate",), BUCKET_SOURCES, True, label="Thermostat"),
+    _r("temperature_source", ("sensor",), BUCKET_SOURCES, True, label="Temperatur"),
+    _r("humidity_source", ("sensor",), BUCKET_SOURCES, True, label="Luftfeuchte"),
+    _r("pressure_source", ("sensor",), BUCKET_SOURCES, True, label="Druck"),
+    _r("lux_source", ("sensor",), BUCKET_SOURCES, True, label="Helligkeit (lux)"),
+    _r("value_source", ("sensor",), BUCKET_SOURCES, True, label="Wert"),
+    _r("battery_source", ("sensor",), BUCKET_SOURCES, False, label="Batterie"),
+    _r("energy_meter", ("sensor",), BUCKET_SOURCES, False, label="Energie (kWh)"),
+    _r("current_meter", ("sensor",), BUCKET_SOURCES, False, label="Strom (A)"),
+    _r("voltage_meter", ("sensor",), BUCKET_SOURCES, False, label="Spannung (V)"),
+    # controls — Capability-only (Attribut)
+    _r("power_switch", ("switch",), BUCKET_CONTROLS, False, label="Steckdose / Schalter"),
+    _r("network_switch", ("switch",), BUCKET_CONTROLS, False, label="Netzwerk-Schalter"),
+    _r("remote_control", ("remote",), BUCKET_CONTROLS, False, label="Fernbedienung"),
+    _r("wake_button", ("button",), BUCKET_CONTROLS, False, label="Wake-Button"),
+    _r("wake_mac", (), BUCKET_CONTROLS, False, kind="text", label="Wake-on-LAN MAC"),
+    # metadata_sources — Attribut-Anreicherung aus separater Entity
+    _r("title_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Titel"),
+    _r("app_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="App"),
+    _r("source_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Quelle/Input"),
+    _r("volume_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Lautstärke"),
+    _r("mute_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Mute"),
+    _r("artist_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Artist"),
+    _r("album_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Album"),
+    _r("game_source", ("sensor", "media_player"), BUCKET_METADATA, False, label="Spiel"),
+    _r("companion_media", ("media_player",), BUCKET_METADATA, False, label="Companion Player"),
+    _r("network_tracker", ("device_tracker",), BUCKET_METADATA, False, label="Companion Tracker"),
+)}
+
+ALL_ROLE_KEYS: Final[tuple[str, ...]] = tuple(ROLE_CATALOG.keys())
+
+
+def role_spec(role: str) -> RoleSpec | None:
+    return ROLE_CATALOG.get(role)
+
+
+def role_bucket(role: str) -> str:
+    spec = ROLE_CATALOG.get(role)
+    return spec.bucket if spec else BUCKET_SOURCES
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GLOBALER SLOT-KATALOG — alle Felder, breite Domains, typ-unabhängig
-# ─────────────────────────────────────────────────────────────────────────────
-
-SLOT_CATALOG: Final[dict[str, SlotSpec]] = {
-    # ── Basics: Integration-Truth + State-Quellen ───────────────────────────
-    CONF_INTEGRATION_ENTITY: SlotSpec(
-        CONF_INTEGRATION_ENTITY, ("media_player",), "Media Player",
-        group=SLOT_GROUP_BASICS, role="integration",
-    ),
-    CONF_POWER_ENTITY: SlotSpec(
-        CONF_POWER_ENTITY, ("binary_sensor",), "An/Aus-Sensor",
-        group=SLOT_GROUP_BASICS, role="power_binary",
-    ),
-    CONF_STATUS_ENTITY: SlotSpec(
-        CONF_STATUS_ENTITY, ("sensor",), "Status-Sensor",
-        group=SLOT_GROUP_BASICS, role="status",
-    ),
-    CONF_TITLE_ENTITY: SlotSpec(
-        CONF_TITLE_ENTITY, ("sensor",), "Titel-Sensor",
-        group=SLOT_GROUP_BASICS, role="title",
-    ),
-    CONF_SWITCH_ENTITY: SlotSpec(
-        CONF_SWITCH_ENTITY, ("switch",), "Schalter / Steckdose",
-        group=SLOT_GROUP_BASICS, role="switch",
-    ),
-    CONF_LIGHT_ENTITY: SlotSpec(
-        CONF_LIGHT_ENTITY, ("light",), "Licht",
-        group=SLOT_GROUP_BASICS, role="light",
-    ),
-    CONF_COVER_ENTITY: SlotSpec(
-        CONF_COVER_ENTITY, ("cover",), "Rollo / Cover",
-        group=SLOT_GROUP_BASICS, role="cover",
-    ),
-    CONF_POSITION_ENTITY: SlotSpec(
-        CONF_POSITION_ENTITY, ("sensor",), "Positions-Sensor",
-        group=SLOT_GROUP_BASICS, role="position",
-    ),
-    CONF_CLIMATE_ENTITY: SlotSpec(
-        CONF_CLIMATE_ENTITY, ("climate",), "Thermostat / Klima",
-        group=SLOT_GROUP_BASICS, role="climate",
-    ),
-    CONF_VALUE_ENTITY: SlotSpec(
-        CONF_VALUE_ENTITY, ("sensor",), "Wert-Sensor",
-        group=SLOT_GROUP_BASICS, role="value",
-    ),
-    # ── Power & Fallbacks ───────────────────────────────────────────────────
-    CONF_WATT_SENSOR: SlotSpec(
-        CONF_WATT_SENSOR, ("sensor",), "Watt-Sensor",
-        group=SLOT_GROUP_POWER, role="watt",
-    ),
-    # ── Measurements: zusätzliche Roh-Messwerte ─────────────────────────────
-    CONF_CURRENT_SENSOR: SlotSpec(
-        CONF_CURRENT_SENSOR, ("sensor",), "Strom-Sensor (A)",
-        group=SLOT_GROUP_MEASUREMENTS, role="current",
-    ),
-    CONF_VOLTAGE_SENSOR: SlotSpec(
-        CONF_VOLTAGE_SENSOR, ("sensor",), "Spannungs-Sensor (V)",
-        group=SLOT_GROUP_MEASUREMENTS, role="voltage",
-    ),
-    CONF_ENERGY_SENSOR: SlotSpec(
-        CONF_ENERGY_SENSOR, ("sensor",), "Energie-Sensor (kWh)",
-        group=SLOT_GROUP_MEASUREMENTS, role="energy",
-    ),
-    # ── Media & Network: Konnektivität + Companion-Geräte ───────────────────
-    CONF_WIFI_SENSOR: SlotSpec(
-        CONF_WIFI_SENSOR, ("binary_sensor",), "WLAN-Status",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="wifi",
-    ),
-    CONF_NETWORK_SWITCH_ENTITY: SlotSpec(
-        CONF_NETWORK_SWITCH_ENTITY, ("switch",), "Netzwerk-/Internetzugang",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="network_access",
-    ),
-    CONF_WAKE_BUTTON_ENTITY: SlotSpec(
-        CONF_WAKE_BUTTON_ENTITY, ("button",), "Wake-on-LAN Button",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="wake_button",
-    ),
-    CONF_WAKE_MAC: SlotSpec(
-        CONF_WAKE_MAC, (), "Wake-on-LAN MAC",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="wake_mac", kind="text",
-    ),
-    CONF_REMOTE_ENTITY: SlotSpec(
-        CONF_REMOTE_ENTITY, ("remote",), "Fernbedienung",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="remote",
-    ),
-    CONF_COMPANION_MEDIA_PLAYER: SlotSpec(
-        CONF_COMPANION_MEDIA_PLAYER, ("media_player",), "Companion Media Player",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="companion_media_player",
-    ),
-    CONF_COMPANION_TRACKER: SlotSpec(
-        CONF_COMPANION_TRACKER, ("device_tracker",), "Companion Tracker",
-        group=SLOT_GROUP_MEDIA_NETWORK, role="companion_tracker",
-    ),
-}
-
-# Entity-Slots, die der Coordinator als HA-State lesen darf (Text-Slots wie
-# wake_mac sind ausgenommen).
-ENTITY_SLOT_KEYS: Final[tuple[str, ...]] = tuple(
-    key for key, spec in SLOT_CATALOG.items() if spec.kind == "entity"
-)
-TEXT_SLOT_KEYS: Final[tuple[str, ...]] = tuple(
-    key for key, spec in SLOT_CATALOG.items() if spec.kind == "text"
-)
-
-ALL_SLOT_KEYS: Final[tuple[str, ...]] = tuple(SLOT_CATALOG.keys())
-
-
-def slot_spec(key: str) -> SlotSpec | None:
-    return SLOT_CATALOG.get(key)
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DEVICE-TYP-PROFILE — nur noch Semantik + Default-Feldvorauswahl
+# ATOMIC-CLASS-KATALOG (§5)
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 @dataclass(frozen=True)
-class DeviceTypeProfile:
-    """Profil eines Device-Typs (Semantik, nicht Pflicht-Enforcement)."""
+class AtomicClassSpec:
+    atomic_class: str
+    variants: tuple[str, ...]
+    power_model: str
+    integration_roles: tuple[str, ...]
+    state_role: str | None
+    required_roles: tuple[str, ...]
+    required_mode: str = "all"            # "all" | "any"
+    fail_safe: str = FAIL_SAFE_HOLD_LAST
+    extra_attributes: tuple[str, ...] = ()
+    stateful: bool = True
+    # Bevorzugte Default-Rollen für den Builder (zus. zu required).
+    default_roles: tuple[str, ...] = ()
+    # Reihenfolge für den primären Messwert (nur numeric).
+    numeric_roles: tuple[str, ...] = ()
+    beta: bool = False
+    icon: str = "mdi:shape"
+    label: str = ""
 
-    device_type: DeviceType
-    # Default-Vorauswahl der Felder in der Maske (vorab angehakt).
-    default_fields: tuple[str, ...]
-    # Welcher Slot liefert die Integration-Truth für R-DC-01 (Stufe 1)?
-    integration_slot: str | None
-    # Welcher Slot trägt den raw-State (z.B. media_player-State)?
-    state_slot: str | None
-    # Typspezifische Attribut-Schlüssel am Haupt-Sensor.
-    extra_attributes: tuple[str, ...] = field(default_factory=tuple)
-    # Stateful (semantischer State über powered hinaus)?
-    stateful: bool = False
+
+def _cls(spec: AtomicClassSpec) -> AtomicClassSpec:
+    return spec
 
 
-_TV = DeviceTypeProfile(
-    device_type=DeviceType.TV,
-    default_fields=(CONF_INTEGRATION_ENTITY, CONF_WATT_SENSOR, CONF_WIFI_SENSOR),
-    integration_slot=CONF_INTEGRATION_ENTITY,
-    state_slot=CONF_INTEGRATION_ENTITY,
-    extra_attributes=(
-        "watt",
-        "media_player_state",
-        "current_app",
-        "source",
-        "media_title",
-        "media_content_type",
-        "volume_level",
-        "is_volume_muted",
+ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in (
+    AtomicClassSpec(
+        atomic_class=AtomicClass.MEDIA_DEVICE.value,
+        variants=("tv", "apple_tv", "streaming_box"),
+        power_model=POWER_MODEL_INTEGRATION_WATT_STICKY,
+        integration_roles=("primary_state",), state_role="primary_state",
+        required_roles=("primary_state",), required_mode="all",
+        fail_safe=FAIL_SAFE_HOLD_LAST,
+        extra_attributes=("media_state", "current_app", "source", "media_title", "volume_level", "is_volume_muted", "watt", "network_online"),
+        default_roles=("primary_state", "power_meter", "network_presence"),
+        icon="mdi:television", label="Media Device",
     ),
-    stateful=True,
-)
-
-_AV_RECEIVER = DeviceTypeProfile(
-    device_type=DeviceType.AV_RECEIVER,
-    default_fields=(CONF_INTEGRATION_ENTITY, CONF_WATT_SENSOR, CONF_WIFI_SENSOR),
-    integration_slot=CONF_INTEGRATION_ENTITY,
-    state_slot=CONF_INTEGRATION_ENTITY,
-    extra_attributes=("watt", "current_source", "volume", "wifi_online", "media_player_state"),
-    stateful=True,
-)
-
-_CONSOLE = DeviceTypeProfile(
-    device_type=DeviceType.CONSOLE,
-    default_fields=(CONF_POWER_ENTITY, CONF_STATUS_ENTITY, CONF_TITLE_ENTITY, CONF_WATT_SENSOR),
-    integration_slot=CONF_POWER_ENTITY,
-    state_slot=CONF_STATUS_ENTITY,
-    extra_attributes=("status", "title", "watt"),
-    stateful=True,
-)
-
-_SPEAKER = DeviceTypeProfile(
-    device_type=DeviceType.SPEAKER,
-    default_fields=(CONF_INTEGRATION_ENTITY, CONF_WIFI_SENSOR),
-    integration_slot=CONF_INTEGRATION_ENTITY,
-    state_slot=CONF_INTEGRATION_ENTITY,
-    extra_attributes=("media_player_state", "current_track", "volume", "wifi_online"),
-    stateful=True,
-)
-
-_PLUG = DeviceTypeProfile(
-    device_type=DeviceType.PLUG,
-    default_fields=(CONF_SWITCH_ENTITY, CONF_WATT_SENSOR),
-    integration_slot=CONF_SWITCH_ENTITY,
-    state_slot=None,
-    extra_attributes=("watt",),
-    stateful=False,
-)
-
-_LIGHT = DeviceTypeProfile(
-    device_type=DeviceType.LIGHT,
-    default_fields=(CONF_LIGHT_ENTITY,),
-    integration_slot=CONF_LIGHT_ENTITY,
-    state_slot=CONF_LIGHT_ENTITY,
-    extra_attributes=("brightness", "color_temp", "rgb"),
-    stateful=True,
-)
-
-_COVER = DeviceTypeProfile(
-    device_type=DeviceType.COVER,
-    default_fields=(CONF_COVER_ENTITY, CONF_POSITION_ENTITY),
-    integration_slot=CONF_COVER_ENTITY,
-    state_slot=CONF_COVER_ENTITY,
-    extra_attributes=("position", "cover_state"),
-    stateful=True,
-)
-
-_CLIMATE = DeviceTypeProfile(
-    device_type=DeviceType.CLIMATE,
-    default_fields=(CONF_CLIMATE_ENTITY,),
-    integration_slot=CONF_CLIMATE_ENTITY,
-    state_slot=CONF_CLIMATE_ENTITY,
-    # Nur geräte-inhärente Wahrheiten — KEIN comfort/eco-Urteil (das macht
-    # benni_climate_policy, weil es current_temp gegen einen Sollwert +
-    # Kontext bewertet). hvac_mode = State, Rest aus den climate-Attributen.
-    extra_attributes=(
-        "current_temperature",
-        "target_temperature",
-        "hvac_action",
-        "hvac_mode",
+    AtomicClassSpec(
+        atomic_class=AtomicClass.AUDIO_ENDPOINT.value,
+        variants=("avr", "speaker", "speaker_group"),
+        power_model=POWER_MODEL_INTEGRATION_WATT_STICKY,
+        integration_roles=("primary_state",), state_role="primary_state",
+        required_roles=("primary_state",), required_mode="all",
+        fail_safe=FAIL_SAFE_HOLD_LAST,
+        extra_attributes=("source", "sound_mode", "volume", "muted", "track", "artist", "album"),
+        default_roles=("primary_state", "power_meter"),
+        icon="mdi:speaker", label="Audio Endpoint",
     ),
-    stateful=True,
-)
+    AtomicClassSpec(
+        atomic_class=AtomicClass.CONSOLE_DEVICE.value,
+        variants=("ps5", "nintendo"),
+        power_model=POWER_MODEL_INTEGRATION_WATT_STICKY,
+        integration_roles=("network_presence", "status_source"), state_role="status_source",
+        required_roles=("status_source", "network_presence"), required_mode="any",
+        fail_safe=FAIL_SAFE_OFF,
+        extra_attributes=("online", "status", "title", "watt", "last_online"),
+        default_roles=("status_source", "network_presence", "power_meter"),
+        icon="mdi:gamepad-variant", label="Console",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.POWER_DEVICE.value,
+        variants=("plug", "pc", "subwoofer", "appliance"),
+        power_model=POWER_MODEL_INTEGRATION_WATT_STICKY,
+        integration_roles=("primary_state",), state_role=None,
+        required_roles=("primary_state", "power_meter"), required_mode="any",
+        fail_safe=FAIL_SAFE_OFF,
+        extra_attributes=("switch_on", "active", "watt", "energy"),
+        stateful=False,
+        default_roles=("primary_state", "power_meter"),
+        icon="mdi:power-socket-de", label="Power Device",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.OPENING.value,
+        variants=("window", "door", "patio_door"),
+        power_model=POWER_MODEL_PASSTHROUGH,
+        integration_roles=("open_contact",), state_role="open_contact",
+        required_roles=("open_contact",), required_mode="all",
+        fail_safe=FAIL_SAFE_OPEN,
+        extra_attributes=("open", "tilted", "contact_state", "battery"),
+        default_roles=("open_contact", "tilt_contact"),
+        icon="mdi:window-open-variant", label="Opening",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.ENVIRONMENT.value,
+        variants=("room_climate", "lux"),
+        power_model=POWER_MODEL_NUMERIC,
+        integration_roles=(), state_role=None,
+        required_roles=("temperature_source", "humidity_source", "pressure_source", "lux_source", "value_source"),
+        required_mode="any",
+        fail_safe=FAIL_SAFE_UNKNOWN,
+        extra_attributes=("temperature", "humidity", "pressure", "lux", "battery", "fresh"),
+        stateful=False,
+        numeric_roles=("temperature_source", "lux_source", "humidity_source", "pressure_source", "value_source"),
+        default_roles=("temperature_source", "humidity_source"),
+        icon="mdi:thermometer", label="Environment",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.LIGHT.value,
+        variants=("single",),
+        power_model=POWER_MODEL_PASSTHROUGH,
+        integration_roles=("light_source",), state_role="light_source",
+        required_roles=("light_source",), required_mode="all",
+        fail_safe=FAIL_SAFE_OFF,
+        extra_attributes=("brightness", "color_mode", "color_temp_kelvin", "rgb", "effect"),
+        default_roles=("light_source",),
+        icon="mdi:lightbulb", label="Light",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.COVER.value,
+        variants=("blind",),
+        power_model=POWER_MODEL_PASSTHROUGH,
+        integration_roles=("cover_source",), state_role="cover_source",
+        required_roles=("cover_source",), required_mode="all",
+        fail_safe=FAIL_SAFE_HOLD_LAST,
+        extra_attributes=("position", "moving", "calibrated"),
+        default_roles=("cover_source", "position_source"),
+        icon="mdi:window-shutter", label="Cover",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.CLIMATE_DEVICE.value,
+        variants=("thermostat",),
+        power_model=POWER_MODEL_PASSTHROUGH,
+        integration_roles=("climate_source",), state_role="climate_source",
+        required_roles=("climate_source",), required_mode="all",
+        fail_safe=FAIL_SAFE_HOLD_LAST,
+        extra_attributes=("current_temperature", "target_temperature", "hvac_action", "hvac_mode"),
+        default_roles=("climate_source",),
+        icon="mdi:thermostat", label="Climate",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.GENERIC_EXPERT.value,
+        variants=("adapter",),
+        power_model=POWER_MODEL_PASSTHROUGH,
+        integration_roles=("value_source",), state_role="value_source",
+        required_roles=("value_source",), required_mode="all",
+        fail_safe=FAIL_SAFE_UNKNOWN,
+        extra_attributes=("value",),
+        default_roles=("value_source",),
+        icon="mdi:tune-vertical", label="Generic / Expert",
+    ),
+    # ── Beta/Expert: nur vorbereitet, keine Tiefe ──────────────────────────
+    AtomicClassSpec(
+        atomic_class=AtomicClass.PRESENCE_PERSON.value, variants=("person",),
+        power_model=POWER_MODEL_PASSTHROUGH, integration_roles=("network_presence",),
+        state_role="network_presence", required_roles=("network_presence",),
+        fail_safe=FAIL_SAFE_UNKNOWN, extra_attributes=(), default_roles=("network_presence",),
+        beta=True, icon="mdi:account", label="Presence (Beta)",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.MOBILE_DASHBOARD.value, variants=("tablet",),
+        power_model=POWER_MODEL_PASSTHROUGH, integration_roles=("value_source",),
+        state_role="value_source", required_roles=("value_source",),
+        fail_safe=FAIL_SAFE_UNKNOWN, extra_attributes=(), default_roles=("value_source",),
+        beta=True, icon="mdi:tablet-dashboard", label="Mobile Dashboard (Beta)",
+    ),
+    AtomicClassSpec(
+        atomic_class=AtomicClass.NETWORK_SERVICE.value, variants=("service",),
+        power_model=POWER_MODEL_PASSTHROUGH, integration_roles=("status_source",),
+        state_role="status_source", required_roles=("status_source",),
+        fail_safe=FAIL_SAFE_UNKNOWN, extra_attributes=(), default_roles=("status_source",),
+        beta=True, icon="mdi:server-network", label="Network Service (Beta)",
+    ),
+)}
 
-_SENSOR_WRAPPER = DeviceTypeProfile(
-    device_type=DeviceType.SENSOR_WRAPPER,
-    default_fields=(CONF_VALUE_ENTITY,),
-    integration_slot=CONF_VALUE_ENTITY,
-    state_slot=CONF_VALUE_ENTITY,
-    extra_attributes=("value", "unit"),
-    stateful=False,
-)
+ALL_ATOMIC_CLASSES: Final[tuple[str, ...]] = tuple(ATOMIC_CLASSES.keys())
 
 
-PROFILES: Final[dict[DeviceType, DeviceTypeProfile]] = {
-    DeviceType.TV: _TV,
-    DeviceType.AV_RECEIVER: _AV_RECEIVER,
-    DeviceType.CONSOLE: _CONSOLE,
-    DeviceType.SPEAKER: _SPEAKER,
-    DeviceType.PLUG: _PLUG,
-    DeviceType.LIGHT: _LIGHT,
-    DeviceType.COVER: _COVER,
-    DeviceType.CLIMATE: _CLIMATE,
-    DeviceType.SENSOR_WRAPPER: _SENSOR_WRAPPER,
-}
-
-
-def profile_for(device_type: DeviceType | str) -> DeviceTypeProfile:
-    dt = device_type if isinstance(device_type, DeviceType) else DeviceType(device_type)
-    return PROFILES[dt]
-
-
-def default_fields(device_type: DeviceType | str) -> tuple[str, ...]:
-    return profile_for(device_type).default_fields
+def atomic_class_spec(atomic_class: AtomicClass | str) -> AtomicClassSpec | None:
+    key = atomic_class.value if isinstance(atomic_class, AtomicClass) else str(atomic_class)
+    return ATOMIC_CLASSES.get(key)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# SLUG + IMPORT-VALIDIERUNG (HA-frei, testbar)
+# v2 CONF-MODELL
 # ─────────────────────────────────────────────────────────────────────────────
 
-import re
+
+@dataclass(frozen=True)
+class SourceBinding:
+    role: str
+    entity: str | None = None
+    value: str | None = None      # nur Text-Controls (wake_mac)
+    required: bool = False
+
+
+@dataclass(frozen=True)
+class DeviceConfigV2:
+    slug: str
+    display_name: str
+    atomic_class: str
+    variant: str
+    sources: tuple[SourceBinding, ...] = ()
+    controls: tuple[SourceBinding, ...] = ()
+    metadata_sources: tuple[SourceBinding, ...] = ()
+    availability_rule: str = DEFAULT_AVAILABILITY_RULE
+    fail_safe: str = FAIL_SAFE_HOLD_LAST
+    watt_threshold_on: int = DEFAULT_WATT_THRESHOLD_ON
+    sticky_hold_seconds: int = DEFAULT_STICKY_HOLD_SECONDS
+    expose_secondary_sensors: bool = False
+    watt_buckets: tuple[dict[str, Any], ...] = ()
+
+    @property
+    def spec(self) -> AtomicClassSpec | None:
+        return atomic_class_spec(self.atomic_class)
+
+    # ── Rollen-Auflösung (HA-frei) ─────────────────────────────────────────
+
+    def all_bindings(self) -> tuple[SourceBinding, ...]:
+        return self.sources + self.controls + self.metadata_sources
+
+    def entity_for_role(self, role: str) -> str | None:
+        for b in self.all_bindings():
+            if b.role == role and b.entity:
+                return b.entity
+        return None
+
+    def value_for_role(self, role: str) -> str | None:
+        for b in self.all_bindings():
+            if b.role == role and b.value:
+                return b.value
+        return None
+
+    def source_entities(self) -> dict[str, str]:
+        """Rolle → Entity für alle entity-basierten Quellen (sources-Bucket)."""
+        out: dict[str, str] = {}
+        for b in self.sources:
+            if b.entity:
+                out[b.role] = b.entity
+        return out
+
+    def compute_entities(self) -> dict[str, str]:
+        """Alle entity-basierten Bindings (alle Buckets) — Rolle → Entity.
+
+        Wird vom Coordinator gelesen, um Readings + Diagnose zu bauen.
+        """
+        out: dict[str, str] = {}
+        for b in self.all_bindings():
+            if b.entity:
+                out[b.role] = b.entity
+        return out
+
+    def integration_role(self) -> str | None:
+        spec = self.spec
+        if not spec:
+            return None
+        configured = self.source_entities()
+        for role in spec.integration_roles:
+            if role in configured:
+                return role
+        return None
+
+    def state_role(self) -> str | None:
+        spec = self.spec
+        if not spec or not spec.state_role:
+            return None
+        return spec.state_role if spec.state_role in self.source_entities() else None
+
+    def watt_role(self) -> str | None:
+        return "power_meter" if "power_meter" in self.source_entities() else None
+
+    def numeric_role(self) -> str | None:
+        spec = self.spec
+        if not spec:
+            return None
+        configured = self.source_entities()
+        order = spec.numeric_roles or spec.required_roles
+        for role in order:
+            if role in configured:
+                return role
+        return None
+
+    def missing_required(self) -> list[str]:
+        """Pflichtrollen ohne konfigurierte Entity (gemäß required_mode)."""
+        spec = self.spec
+        if not spec or not spec.required_roles:
+            return []
+        configured = set(self.source_entities().keys())
+        # text-Controls (wake_mac) ggf. ebenfalls als 'gesetzt' werten
+        for b in self.all_bindings():
+            if b.value:
+                configured.add(b.role)
+        if spec.required_mode == "any":
+            return [] if any(r in configured for r in spec.required_roles) else list(spec.required_roles)
+        return [r for r in spec.required_roles if r not in configured]
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PARSING (Storage / Import / WebSocket → DeviceConfigV2)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _parse_bindings(raw: Any) -> tuple[SourceBinding, ...]:
+    if not isinstance(raw, list):
+        return ()
+    out: list[SourceBinding] = []
+    for item in raw:
+        if not isinstance(item, dict):
+            continue
+        role = str(item.get(CONF_ROLE) or "").strip()
+        if not role:
+            continue
+        out.append(SourceBinding(
+            role=role,
+            entity=(str(item[CONF_ENTITY]) if item.get(CONF_ENTITY) else None),
+            value=(str(item[CONF_VALUE]) if item.get(CONF_VALUE) else None),
+            required=bool(item.get(CONF_REQUIRED, False)),
+        ))
+    return tuple(out)
+
+
+def parse_device_config(slug: str, raw: Any) -> DeviceConfigV2 | None:
+    """Parst ein gespeichertes v2-Device-Dict. Robust gegen Müll (→ None)."""
+    if not isinstance(raw, dict):
+        return None
+    atomic_class = str(raw.get(CONF_ATOMIC_CLASS) or "").strip()
+    if atomic_class not in ATOMIC_CLASSES:
+        return None
+    variant = str(raw.get(CONF_VARIANT) or "").strip()
+    spec = ATOMIC_CLASSES[atomic_class]
+    diagnostics = raw.get("diagnostics") if isinstance(raw.get("diagnostics"), dict) else {}
+    fail_safe = str(diagnostics.get(CONF_FAIL_SAFE) or raw.get(CONF_FAIL_SAFE) or spec.fail_safe)
+    availability = str(diagnostics.get(CONF_AVAILABILITY_RULE) or raw.get(CONF_AVAILABILITY_RULE) or DEFAULT_AVAILABILITY_RULE)
+    buckets = raw.get(CONF_WATT_BUCKETS)
+    return DeviceConfigV2(
+        slug=slug,
+        display_name=str(raw.get(CONF_DISPLAY_NAME) or slug),
+        atomic_class=atomic_class,
+        variant=variant or (spec.variants[0] if spec.variants else ""),
+        sources=_parse_bindings(raw.get(CONF_SOURCES)),
+        controls=_parse_bindings(raw.get(CONF_CONTROLS)),
+        metadata_sources=_parse_bindings(raw.get(CONF_METADATA_SOURCES)),
+        availability_rule=availability,
+        fail_safe=fail_safe,
+        watt_threshold_on=int(raw.get(CONF_WATT_THRESHOLD_ON, DEFAULT_WATT_THRESHOLD_ON) or DEFAULT_WATT_THRESHOLD_ON),
+        sticky_hold_seconds=int(raw.get(CONF_STICKY_HOLD_SECONDS, DEFAULT_STICKY_HOLD_SECONDS) or DEFAULT_STICKY_HOLD_SECONDS),
+        expose_secondary_sensors=bool(raw.get(CONF_EXPOSE_SECONDARY_SENSORS, False)),
+        watt_buckets=tuple(buckets) if isinstance(buckets, list) else (),
+    )
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SLUG + SOURCE-CLASSIFIER (unverändert übernommen)
+# ─────────────────────────────────────────────────────────────────────────────
 
 SLUG_RE: Final[re.Pattern[str]] = re.compile(r"^[a-z0-9_]+$")
+_TRANSLIT: Final[dict[str, str]] = {"ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss"}
 
 
 def is_valid_slug(slug: str) -> bool:
@@ -360,35 +485,20 @@ def is_valid_slug(slug: str) -> bool:
 
 
 def slugify(text: str) -> str:
-    """Wandelt einen Anzeigenamen in einen slug (a-z0-9_) um.
-
-    'Wohnzimmer TV' → 'wohnzimmer_tv'. Mehrfache/führende/trailing
-    Trennzeichen werden zu einem Unterstrich kollabiert.
-    """
     out = []
     prev_us = False
-    for ch in text.strip().lower():
+    for ch in str(text).strip().lower():
         if ch.isalnum() and ch.isascii():
-            out.append(ch)
-            prev_us = False
+            out.append(ch); prev_us = False
         elif ch in (" ", "-", "_", ".", "/"):
             if not prev_us:
-                out.append("_")
-                prev_us = True
-        # alles andere (Umlaute etc.) — simple Transliteration der häufigsten
+                out.append("_"); prev_us = True
         elif ch in _TRANSLIT:
-            out.append(_TRANSLIT[ch])
-            prev_us = False
+            out.append(_TRANSLIT[ch]); prev_us = False
     return "".join(out).strip("_")
 
 
-_TRANSLIT: Final[dict[str, str]] = {
-    "ä": "ae", "ö": "oe", "ü": "ue", "ß": "ss",
-}
-
-
 def unique_slug(base: str, existing: set[str]) -> str:
-    """Stellt Eindeutigkeit her: hängt _2, _3, … an falls nötig."""
     if base not in existing:
         return base
     i = 2
@@ -397,33 +507,10 @@ def unique_slug(base: str, existing: set[str]) -> str:
     return f"{base}_{i}"
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# SOURCE-CLASSIFIER — erkennt problematische Quellen (LH §5)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Object-id-Suffixe, die auf abgeleitete / nicht-rohe Quellen hindeuten.
-# Diese dürfen NICHT still als Raw-Slot übernommen werden — die Integration
-# soll genau diese Schicht selbst erzeugen.
-BLOCKED_SOURCE_SUFFIXES: Final[tuple[str, ...]] = (
-    "_atomic",
-    "_combined",
-    "_gate",
-)
+BLOCKED_SOURCE_SUFFIXES: Final[tuple[str, ...]] = ("_atomic", "_combined", "_gate")
 
 
-def classify_source_entity(
-    entity_id: Any, *, own_prefixes: tuple[str, ...] = ()
-) -> str | None:
-    """Klassifiziert eine als Slot gewählte Entity (LH §5).
-
-    Returns eine Warn-Kategorie wenn die Quelle nicht roh ist, sonst None:
-    - "atomic"   — endet auf `_atomic` (alte YAML-Atomics)
-    - "combined" — endet auf `_combined`
-    - "gate"     — endet auf `_gate` (abgeleitete Gate-/Policy-Ausgaben)
-    - "own"      — von dieser Integration selbst erzeugt (rückkopplungsgefährdet)
-
-    HA-frei: arbeitet rein auf dem entity_id-String.
-    """
+def classify_source_entity(entity_id: Any, *, own_prefixes: tuple[str, ...] = ()) -> str | None:
     if not isinstance(entity_id, str) or "." not in entity_id:
         return None
     object_id = entity_id.split(".", 1)[1]
@@ -437,45 +524,33 @@ def classify_source_entity(
 
 
 def source_warning_text(category: str, entity_id: str) -> str:
-    """Lesbare Warnung für eine problematische Quelle."""
     labels = {
         "atomic": "alte YAML-Atomic-Quelle",
         "combined": "Combined-/Policy-Quelle",
         "gate": "abgeleitete Gate-Quelle",
         "own": "von dieser Integration selbst erzeugte Quelle",
     }
-    label = labels.get(category, category)
-    return f"{entity_id}: {label} sollte nicht als Raw-Slot dienen"
+    return f"{entity_id}: {labels.get(category, category)} sollte nicht als Raw-Quelle dienen"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# IMPORT-VALIDIERUNG (v2)
+# ─────────────────────────────────────────────────────────────────────────────
 
 
 def validate_import_device(d: Any) -> str | None:
-    """Validiert EIN Device-Dict aus dem Bulk-Import (R-DC-08).
-
-    Neues Modell: nur slug + gültiger device_type sind Pflicht. Slots sind
-    alle optional (was nicht da ist, ist okay). Unbekannte Slot-Keys werden
-    ignoriert. Returns None bei OK, sonst eine Fehlerbeschreibung.
-    """
     if not isinstance(d, dict):
         return "Eintrag ist kein Mapping"
     slug = str(d.get(CONF_SLUG, "")).strip().lower()
     if not is_valid_slug(slug):
         return f"ungültiger slug: {d.get(CONF_SLUG)!r}"
-    dt_raw = d.get(CONF_DEVICE_TYPE)
-    try:
-        DeviceType(dt_raw)
-    except (ValueError, TypeError):
-        return f"{slug}: unbekannter device_type {dt_raw!r}"
+    atomic_class = d.get(CONF_ATOMIC_CLASS)
+    if atomic_class not in ATOMIC_CLASSES:
+        return f"{slug}: unbekannte atomic_class {atomic_class!r}"
     return None
 
 
-def validate_import_payload(
-    devices: Any,
-) -> tuple[list[dict[str, Any]], list[str]]:
-    """Validiert die gesamte Bulk-Import-Liste (strict / all-or-nothing).
-
-    Returns (valid_devices, errors). Bei nicht-leerer errors-Liste sollte der
-    Aufrufer NICHTS anlegen.
-    """
+def validate_import_payload(devices: Any) -> tuple[list[dict[str, Any]], list[str]]:
     if not isinstance(devices, list) or not devices:
         return ([], ["devices ist keine nicht-leere Liste"])
     errors: list[str] = []
@@ -493,8 +568,6 @@ def validate_import_payload(
         seen.add(slug)
         normalized = dict(d)
         normalized[CONF_SLUG] = slug
-        from .const import CONF_DISPLAY_NAME
-
         if not normalized.get(CONF_DISPLAY_NAME):
             normalized[CONF_DISPLAY_NAME] = slug
         valid.append(normalized)

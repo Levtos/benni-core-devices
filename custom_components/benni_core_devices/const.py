@@ -283,4 +283,5 @@ WS_BULK_IMPORT = f"{DOMAIN}/bulk_import"
 WS_SET_COMBINED = f"{DOMAIN}/set_combined"
 WS_REMOVE_COMBINED = f"{DOMAIN}/remove_combined"
 WS_EXPORT_CONFIG = f"{DOMAIN}/export_config"
+WS_AGENT_SPEC = f"{DOMAIN}/get_agent_spec"
 

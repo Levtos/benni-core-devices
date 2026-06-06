@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.2 — Agent-Briefing-Generator (Import für LLM-Agenten)
+
+- **Neuer „Agent-Briefing"-Generator** (Import/Export-Seite + WS
+  `get_agent_spec`): erzeugt ein selbsterklärendes **Markdown-Briefing + JSON-
+  Schema** für eine frische Claude-Code-/Codex-Session mit MCP-Anbindung. Enthält
+  Rollenkatalog, Klassen (required/optional/controls + abgeleitete Metadaten,
+  Domains, fail_safe, exposed attributes), Blocked-Source-Regeln, Import-YAML-
+  Schema + Beispiele, Combined-Config-Schema und den Workflow
+  (export → discover via MCP → `bulk_import` dry_run → apply; Combineds via
+  `set_combined`) sowie den aktuellen Export als Kontext.
+- Ziel: Atomics/Combineds per Import durch einen Agenten bauen lassen; die beiden
+  Builder bleiben für manuelle Eingriffe. Reiner Generator — löst keinen Agenten aus.
+- Neuer HA-freier, getesteter Layer `agent_spec.py`.
+
 ## 0.3.1 — Versions-Badge + v2.1-Auslieferung
 
 - **Version im Panel sichtbar**: WebSocket-Katalog liefert die Integrations-

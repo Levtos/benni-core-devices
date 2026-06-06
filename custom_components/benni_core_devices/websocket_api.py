@@ -46,6 +46,7 @@ from .const import (
     WS_EXPORT_CONFIG,
     WS_GET_CATALOG,
     WS_GET_STATUS,
+    WS_AGENT_SPEC,
     WS_REMOVE_COMBINED,
     WS_REMOVE_DEVICE,
     WS_REMOVE_GROUP,
@@ -554,7 +555,30 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             return
         connection.send_result(msg["id"], {"yaml": _export_yaml(entry)})
 
+    @websocket_api.websocket_command({vol.Required("type"): WS_AGENT_SPEC})
+    @websocket_api.async_response
+    async def ws_agent_spec(hass, connection, msg) -> None:
+        from .agent_spec import build_briefing, build_json_schema
+
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        version = "?"
+        try:
+            from homeassistant.loader import async_get_integration
+
+            version = str((await async_get_integration(hass, DOMAIN)).version)
+        except Exception:  # noqa: BLE001
+            pass
+        profile = entry_profile(entry)
+        connection.send_result(msg["id"], {
+            "version": version,
+            "markdown": build_briefing(version, profile, _export_yaml(entry)),
+            "json_schema": build_json_schema(),
+        })
+
     for cmd in (ws_get_status, ws_get_catalog, ws_set_device, ws_remove_device,
                 ws_set_combined, ws_remove_combined, ws_set_group, ws_remove_group,
-                ws_bulk_import, ws_export_config):
+                ws_bulk_import, ws_export_config, ws_agent_spec):
         websocket_api.async_register_command(hass, cmd)

@@ -380,7 +380,15 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
     @websocket_api.websocket_command({vol.Required("type"): WS_GET_CATALOG})
     @websocket_api.async_response
     async def ws_get_catalog(hass, connection, msg) -> None:
-        connection.send_result(msg["id"], _catalog())
+        cat = _catalog()
+        try:
+            from homeassistant.loader import async_get_integration
+
+            integration = await async_get_integration(hass, DOMAIN)
+            cat["version"] = str(integration.version)
+        except Exception:  # noqa: BLE001
+            cat["version"] = "?"
+        connection.send_result(msg["id"], cat)
 
     @websocket_api.websocket_command({
         vol.Required("type"): WS_SET_DEVICE,

@@ -137,7 +137,9 @@ class BcdApp extends HTMLElement {
         const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
         const ready = devices.filter(
           (d) => d.attrs && d.attrs.atomic_quality === "ok").length;
+        const version = (this._store.catalog && this._store.catalog.version) || "?";
         chips.innerHTML = [
+          chip("info", `v${version}`),
           chip("accent", `Route: ${status.profile_label || status.profile || "?"}`),
           chip(devices.length ? "info" : "warn", `Devices ${devices.length}`),
           chip("info", `Combined ${combineds.length}`),
@@ -154,7 +156,8 @@ class BcdApp extends HTMLElement {
         : "";
     }
     const foot = this.shadowRoot.getElementById("foot");
-    if (foot && status.profile) foot.textContent = `benni_core_devices · ${status.profile}`;
+    const version = (this._store.catalog && this._store.catalog.version) || "?";
+    if (foot) foot.textContent = `benni_core_devices · v${version}${status.profile ? " · " + status.profile : ""}`;
     const content = this.shadowRoot.getElementById("content");
     if (DRAFT_VIEWS.has(this._view) && content?.dataset.keepDraft === "true") {
       return;

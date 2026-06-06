@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.1 — Versions-Badge + v2.1-Auslieferung
+
+- **Version im Panel sichtbar**: WebSocket-Katalog liefert die Integrations-
+  Version (aus dem Manifest); das Panel zeigt sie als Chip oben rechts und im
+  Sidebar-Fuß. So ist sofort erkennbar, welcher Stand wirklich deployt ist.
+- **Versions-Bump** erzwingt ein echtes HACS-Update: v2 und v2.1 trugen beide
+  `0.3.0`, weshalb HACS „keine neue Version" sah und den alten Stand behielt.
+  0.3.1 transportiert die v2.1-Korrekturen (abgeleitete Metadaten, klassen-
+  gescopte Rollen, eingeengte Domains) zuverlässig auf die Instanz.
+
 ## 0.3.0 — Rollenbasierter v2-Rework (Hard-Rework)
 
 Harter Rework: `device_type` + flache Slots → `atomic_class` + `variant` +

@@ -201,8 +201,10 @@ def test_validate_rejects_time_latch():
         derived_values=(CB.DerivedValue(name="l", kind="latch",
                                         set_expr="${a}", reset_expr="since(${a}) >= 3600"),),
     )
-    # since() ist v1.0 nicht erlaubt → Fehler (unbekannte Funktion / v1.1)
-    assert any("l.reset" in e for e in CB.validate_combined_v1(cfg))
+    errs = CB.validate_combined_v1(cfg)
+    # Klare v1.1-Meldung, KEIN kryptischer Parse-Fehler
+    assert any("v1.1" in e and "l.reset" in e for e in errs)
+    assert not any("Parse" in e for e in errs)
 
 
 def test_validate_clean_config_no_errors():

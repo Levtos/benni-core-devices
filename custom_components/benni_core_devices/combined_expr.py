@@ -19,6 +19,9 @@ from typing import Any
 _TRUTHY = frozenset({"on", "true", "yes", "1", "open", "home", "playing", "active", "heat", "cool"})
 _FALSY = frozenset({"off", "false", "no", "0", "closed", "not_home", "idle", "standby", "unavailable", "unknown", "offline"})
 _FUNCS = frozenset({"min", "max", "abs", "round", "clamp", "any", "all", "not"})
+# v1.1-Funktionen: vom Parser akzeptiert (kein kryptischer Parse-Fehler), aber
+# von validate_combined_v1 mit klarer v1.1-Meldung abgelehnt; zur Laufzeit → None.
+_V11_FUNCS = frozenset({"since"})
 
 
 class ExprError(ValueError):
@@ -211,7 +214,7 @@ class _Parser:
                         self._next()
                         args.append(self._or())
                 self._expect(")")
-                if fname not in _FUNCS:
+                if fname not in _FUNCS and fname not in _V11_FUNCS:
                     raise ExprError(f"unknown function {t[1]!r}")
                 return ("call", fname, args)
             raise ExprError(f"bare name {t[1]!r} (use ${{...}} for refs)")

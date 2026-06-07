@@ -478,8 +478,11 @@ def validate_combined_v1(config: CombinedConfig) -> list[str]:
         for r in refs(ast):
             if r not in allowed:
                 errors.append(f"{label}: unbekannte Referenz ${{{r}}}")
-        if is_latch and ("since" in refs(ast) or "since" in func_names(ast)):
-            errors.append(f"{label}: Zeit-Reset (since) ist v1.1, nicht in v1.0 erlaubt")
+        v11 = func_names(ast) & {"since"}
+        if v11:
+            errors.append(
+                f"{label}: '{sorted(v11)[0]}' ist v1.1 (Timer/Scheduling) — in v1.0 nicht erlaubt"
+            )
 
     for dv in config.derived_values:
         if dv.kind not in NODE_KINDS:

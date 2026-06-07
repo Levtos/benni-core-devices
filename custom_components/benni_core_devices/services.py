@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import logging
 
 import voluptuous as vol
@@ -102,24 +103,24 @@ def async_register_services(hass: HomeAssistant) -> None:
     if not hass.services.has_service(DOMAIN, SERVICE_SET_OVERRIDE):
         hass.services.async_register(
             DOMAIN, SERVICE_SET_OVERRIDE,
-            lambda call: _set_override(hass, call), schema=_SET_OVERRIDE_SCHEMA
+            functools.partial(_set_override, hass), schema=_SET_OVERRIDE_SCHEMA
         )
     if not hass.services.has_service(DOMAIN, SERVICE_CLEAR_OVERRIDE):
         hass.services.async_register(
             DOMAIN, SERVICE_CLEAR_OVERRIDE,
-            lambda call: _clear_override(hass, call), schema=_CLEAR_OVERRIDE_SCHEMA
+            functools.partial(_clear_override, hass), schema=_CLEAR_OVERRIDE_SCHEMA
         )
     if not hass.services.has_service(DOMAIN, SERVICE_BULK_IMPORT):
         hass.services.async_register(
             DOMAIN, SERVICE_BULK_IMPORT,
-            lambda call: _bulk_import(hass, call),
+            functools.partial(_bulk_import, hass),
             schema=_BULK_IMPORT_SCHEMA,
             supports_response=SupportsResponse.OPTIONAL,
         )
     if not hass.services.has_service(DOMAIN, SERVICE_EXPORT_CONFIG):
         hass.services.async_register(
             DOMAIN, SERVICE_EXPORT_CONFIG,
-            lambda call: _export_config(hass, call),
+            functools.partial(_export_config, hass),
             supports_response=SupportsResponse.ONLY,
         )
 

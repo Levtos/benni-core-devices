@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.3.6 — Fix: Service-Handler-Registrierung
+
+- **Bug:** Services waren mit `lambda call: handler(hass, call)` registriert —
+  ein Lambda, das eine Coroutine zurückgibt, erkennt HA nicht als
+  Coroutine-Funktion → wird nicht awaited → 500 beim Aufruf.
+- **Fix:** Registrierung über `functools.partial(handler, hass)` (von HA als
+  Coroutine-Funktion erkannt). `export_config`/`bulk_import` (und die
+  Override-Services) funktionieren jetzt via `ha_call_service`/MCP.
+
 ## 0.3.5 — Import/Export als HA-Service (MCP-/Agenten-fähig)
 
 - **Neuer Service `benni_core_devices.bulk_import`** (`payload`, `dry_run`,

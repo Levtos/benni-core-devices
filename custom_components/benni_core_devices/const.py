@@ -226,6 +226,12 @@ STORAGE_KEY_OVERRIDE_EXPIRES_AT: Final[str] = "expires_at"
 
 SERVICE_SET_OVERRIDE: Final[str] = "set_override"
 SERVICE_CLEAR_OVERRIDE: Final[str] = "clear_override"
+# Agenten-/MCP-fähige Import-/Export-Services (spiegeln die WS-Commands).
+SERVICE_BULK_IMPORT: Final[str] = "bulk_import"
+SERVICE_EXPORT_CONFIG: Final[str] = "export_config"
+ATTR_PAYLOAD: Final[str] = "payload"
+ATTR_DRY_RUN: Final[str] = "dry_run"
+ATTR_REPLACE: Final[str] = "replace"
 ATTR_SLUG: Final[str] = "slug"
 ATTR_POWERED: Final[str] = "powered"
 ATTR_POWER_STATE: Final[str] = "power_state"

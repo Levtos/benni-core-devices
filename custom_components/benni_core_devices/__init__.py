@@ -118,6 +118,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     combineds: dict[str, CombinedCoordinator] = {}
     for slug, conf in _combineds_conf(entry).items():
         combined = CombinedCoordinator(hass, entry, slug, conf)
+        await combined.async_load_stored()
         await combined.async_config_entry_first_refresh()
         combined.async_start_listeners()
         combineds[slug] = combined

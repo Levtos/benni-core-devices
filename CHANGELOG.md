@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.4.0 — Combined v1.0 (Expression / Gate / Health / Latch)
+
+Additiv auf die v0-First-Match-Engine — v0 bleibt unverändert. HA-frei + getestet.
+
+- **`combined_expr.py`** — sichere Mini-Expression-Engine (eigener AST, **kein
+  eval/Jinja**): `${refs}`, `+ - * /`, `== != < <= > >=`, `and/or/not`,
+  Funktionen `min/max/abs/round/clamp/any/all/not`. None-Propagation + Div0→None.
+- **`derived_values[]`** (v1.0) in der Combined-Config — benannte Zwischenwerte,
+  vor den Regeln ausgewertet; Regeln/Output dürfen `${name}`/`${self}` nutzen,
+  Output kann `"${name}"` sein:
+  - `expr` (Zahl), `gate` (Boolean), `health` (`ok|degraded|problem` aus
+    Atomic-Quellen), `latch` (Schmitt-Hysterese set/reset + hold, **v1.0b**),
+    `previous` (`${self}`, **v1.0b**).
+  - `fail_safe` pro Node/Config (`off|open|hold_last|unknown`).
+- **Persistenz (v1.0b):** Combineds speichern `last_state` + Node-States (Store),
+  für `latch`/`previous`/`hold_last` über Neustarts. **Kein Scheduling** (Timer =
+  v1.1).
+- **Dry-Run-Validierung:** `bulk_import` prüft v1-Configs (Parse-Fehler,
+  unbekannte `${refs}`, Zyklen, `since`/Timer → v1.1-Ablehnung) und meldet pro
+  Combined.
+- **Shadow-Compare** (`shadow_of`): Attribut `shadow_compare {expected, actual,
+  diverges}` für den Strangler-Vergleich gegen alte YAML-Sensoren.
+- Katalog + Agent-Briefing um die v1-Node-Typen erweitert.
+
 ## 0.3.6 — Fix: Service-Handler-Registrierung
 
 - **Bug:** Services waren mit `lambda call: handler(hass, call)` registriert —

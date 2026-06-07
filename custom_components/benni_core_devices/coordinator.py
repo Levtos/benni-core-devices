@@ -350,7 +350,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
             name=f"{DOMAIN}_{entry.entry_id}_combined_{slug}",
             update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
         )
-        from .combined import CombinedConfig, parse_combined
+        from .combined import CombinedConfig, CombinedPersisted, parse_combined
 
         self.entry = entry
         self._slug = slug
@@ -358,8 +358,24 @@ class CombinedCoordinator(DataUpdateCoordinator):
         self._config = parse_combined(slug, raw_conf) or CombinedConfig(
             slug=slug, display_name=slug
         )
+        self._shadow_of = raw_conf.get("shadow_of") if isinstance(raw_conf, dict) else None
         self._unsub_listeners: list[CALLBACK_TYPE] = []
         self._last_readings: dict[str, Any] = {}
+        self._store = Store(
+            hass, STORAGE_VERSION,
+            storage_key(entry.entry_id, f"combined_{slug}", self._profile_name),
+        )
+        self._persisted = CombinedPersisted()
+
+    async def async_load_stored(self) -> None:
+        raw = await self._store.async_load()
+        if isinstance(raw, dict):
+            from .combined import CombinedPersisted
+
+            self._persisted = CombinedPersisted(
+                last_state=raw.get("last_state"),
+                node_states=dict(raw.get("node_states") or {}),
+            )
 
     @property
     def slug(self) -> str:
@@ -393,14 +409,27 @@ class CombinedCoordinator(DataUpdateCoordinator):
                 numeric = float(state.state)
             except (TypeError, ValueError):
                 numeric = None
-            readings[src.key] = SourceReading(value=state.state, numeric=numeric, available=True)
+            readings[src.key] = SourceReading(
+                value=state.state, numeric=numeric, available=True,
+                attributes=dict(state.attributes),
+            )
         return readings
 
     def _compute(self):
-        from .combined import evaluate_combined
+        from .combined import CombinedPersisted, evaluate_combined
 
         self._last_readings = self._read()
-        return evaluate_combined(self._config, self._last_readings)
+        result = evaluate_combined(
+            self._config, self._last_readings, self._persisted, dt_util.now()
+        )
+        # v1.0b: last_state + node_states persistieren (für latch/previous/hold_last).
+        new = CombinedPersisted(last_state=result.state, node_states=result.node_states)
+        if new != self._persisted:
+            self._persisted = new
+            self.hass.async_create_task(self._store.async_save({
+                "last_state": new.last_state, "node_states": new.node_states,
+            }))
+        return result
 
     async def _async_update_data(self):
         return self._compute()
@@ -447,7 +476,22 @@ class CombinedCoordinator(DataUpdateCoordinator):
             "missing_sources": result.missing_sources,
             "degraded": result.degraded,
             "degraded_reason": result.degraded_reason,
+            "derived": result.derived,
+            **self._shadow_compare(result),
         }
+
+    def _shadow_compare(self, result) -> dict[str, Any]:
+        """Strangler-Vergleich gegen einen alten YAML-Sensor (LH §8)."""
+        if not self._shadow_of:
+            return {}
+        old = self.hass.states.get(self._shadow_of)
+        actual = old.state if old is not None else None
+        return {"shadow_compare": {
+            "of": self._shadow_of,
+            "expected": result.state,
+            "actual": actual,
+            "diverges": actual is not None and str(actual) != str(result.state),
+        }}
 
 
 # ─────────────────────────────────────────────────────────────────────────────

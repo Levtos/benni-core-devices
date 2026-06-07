@@ -21,12 +21,17 @@ function reportCard(result) {
     </tr>`;
   }).join("");
   const cRows = (result.combined_report || []).map((r) => {
-    const sev = r.derived_sources && r.derived_sources.length ? "err" : (r.accepted ? "ok" : "warn");
-    const issues = (r.derived_sources || []).map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`).join("");
+    const val = r.validation || [];
+    const sev = (r.derived_sources && r.derived_sources.length) || val.length ? "err" : (r.accepted ? "ok" : "warn");
+    const issues = [
+      ...(r.derived_sources || []).map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
+      ...val.map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
+    ].join("");
+    const dv = r.derived_values ? ` · ${r.derived_values} derived` : "";
     return `<tr>
       <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
       <td class="mono">${esc(r.entity_id)}</td>
-      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen</td>
+      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}</td>
       <td>${issues || `<span class="muted">—</span>`}</td>
     </tr>`;
   }).join("");

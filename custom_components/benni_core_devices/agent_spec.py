@@ -201,6 +201,23 @@ fail_safe: {", ".join(f"`{f}`" for f in FAIL_SAFE_CHOICES)}
 A derived binary sensor's `target` is `__output__`, a source `key`, or a role
 (any-match over sources of that role).
 
+### Combined v1 derived_values (optional, additive)
+Named intermediate values, evaluated before the rules; rules/output may reference
+`${{name}}` and `${{self}}` (own last output). Output may be `"${{name}}"`.
+- `expr` (number): formula over `${{refs}}`, ops `+ - * /` `== != < <= > >=` `and or not`,
+  funcs `min,max,abs,round(x[,n]),clamp(x,lo,hi)`. None-propagating (unavailable → fail_safe).
+- `gate` (bool): same parser; `any([...])`/`all([...])`/`not(x)`.
+- `health`: `atomics: [src_key, ...]` → `ok|degraded|problem`.
+- `latch`: `set:` / `reset:` gate-expressions (Schmitt hysteresis); holds between; `fail_safe`.
+- `previous`: expose `${{self}}`.
+fail_safe per node or config: `off|open|hold_last|unknown`. Timers/`since` = v1.1 (rejected).
+```yaml
+  derived_values:
+    - {{ name: any_open, kind: gate, expr: "any([${{open_a}}, ${{open_b}}])" }}
+    - {{ name: dew, kind: expr, expr: "round(${{t}} - (100 - ${{rh}})/5, 1)" }}
+    - {{ name: dark, kind: latch, set: "${{lux}} < 50", reset: "${{lux}} >= 100", fail_safe: off }}
+```
+
 ## Current configuration (export — do not duplicate)
 ```yaml
 {export_yaml.strip() or "# (empty)"}

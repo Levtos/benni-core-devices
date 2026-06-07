@@ -242,6 +242,20 @@ def _catalog() -> dict[str, Any]:
             "operators": list(COMBINED_OPERATOR_CHOICES),
             "output_types": list(OUTPUT_TYPE_CHOICES),
             "roles": list(COMBINED_ROLE_CHOICES),
+            "v1": {
+                "functions": ["min", "max", "abs", "round(x[,n])", "clamp(x,lo,hi)", "any([...])", "all([...])", "not(x)"],
+                "operators": ["+ - * /", "== != < <= > >=", "and or not"],
+                "refs": "${source_key} | ${derived_name} | ${self}",
+                "fail_safe": ["off", "open", "hold_last", "unknown"],
+                "nodes": [
+                    {"kind": "expr", "desc": "Zahl aus Formel", "example": {"name": "dew", "kind": "expr", "expr": "round(${t} - (100 - ${rh})/5, 1)"}},
+                    {"kind": "gate", "desc": "Boolean aus Logik", "example": {"name": "unsafe", "kind": "gate", "expr": "any([${any_open}, ${any_tilt}])"}},
+                    {"kind": "health", "desc": "ok|degraded|problem aus Atomic-Quellen", "example": {"name": "h", "kind": "health", "atomics": ["src_a", "src_b"]}},
+                    {"kind": "latch", "desc": "Schmitt-Latch (set/reset, hält dazwischen)", "example": {"name": "dark", "kind": "latch", "set": "${lux} < 50", "reset": "${lux} >= 100", "fail_safe": "off"}},
+                    {"kind": "previous", "desc": "eigener letzter Output via ${self}", "example": {"name": "prev", "kind": "previous"}},
+                ],
+                "note": "derived_values[] werden vor den first-match rules ausgewertet; rules/output dürfen ${derived} und ${self} referenzieren. Output kann '${name}' sein. since/Timer = v1.1 (abgelehnt).",
+            },
         },
         "defaults": {
             "watt_threshold_on": DEFAULT_WATT_THRESHOLD_ON,
@@ -384,7 +398,7 @@ def _import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, 
 
 
 def _combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list[dict[str, Any]]:
-    from .combined import parse_combined
+    from .combined import parse_combined, validate_combined_v1
 
     own = _own_prefixes(profile)
     rep: list[dict[str, Any]] = []
@@ -392,18 +406,18 @@ def _combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list
         cfg = parse_combined(slug, conf)
         n = len(cfg.sources) if cfg else 0
         derived_sources = []
-        for src in (cfg.sources if cfg else []):
-            if src.entity:
-                cat = classify_source_entity(src.entity, own_prefixes=own)
-                if cat:
-                    derived_sources.append(source_warning_text(cat, src.entity))
+        # Hinweis: Combineds DÜRFEN Atomics/Combineds lesen — hier kein Block,
+        # nur informativ (eigene Outputs als Quelle wären Rückkopplung).
+        validation = validate_combined_v1(cfg) if cfg else ["ungültige Config"]
         rep.append({
             "slug": slug,
             "output_type": cfg.output_type if cfg else "?",
             "sources": n,
+            "derived_values": len(cfg.derived_values) if cfg else 0,
             "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
             "derived_sources": derived_sources,
-            "accepted": cfg is not None and not derived_sources,
+            "validation": validation,
+            "accepted": cfg is not None and not validation,
         })
     return rep
 

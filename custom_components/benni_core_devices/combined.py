@@ -19,6 +19,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from .combined_expr import ExprError, as_bool, as_num, eval_expr, func_names, parse, refs
 from .const import (
     COMBINED_OP_EQ,
     COMBINED_OP_GE,
@@ -28,6 +29,10 @@ from .const import (
     COMBINED_OP_NE,
     COMBINED_OP_UNAVAILABLE,
     COMBINED_OPERATOR_CHOICES,
+    FAIL_SAFE_HOLD_LAST,
+    FAIL_SAFE_OFF,
+    FAIL_SAFE_OPEN,
+    FAIL_SAFE_UNKNOWN,
     OUTPUT_TYPE_BOOLEAN,
     OUTPUT_TYPE_CODE,
     OUTPUT_TYPE_ENUM,
@@ -36,6 +41,15 @@ from .const import (
 
 # Werte, die als "an/wahr" gelten (für boolean-Output + Derived-Sensoren).
 _TRUTHY = frozenset({"on", "true", "yes", "1", "open", "home", "playing", "active"})
+
+# v1.0 Node-Arten in derived_values[].
+NODE_EXPR = "expr"
+NODE_GATE = "gate"
+NODE_HEALTH = "health"
+NODE_LATCH = "latch"
+NODE_PREVIOUS = "previous"
+NODE_KINDS = (NODE_EXPR, NODE_GATE, NODE_HEALTH, NODE_LATCH, NODE_PREVIOUS)
+SELF_REF = "self"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -50,6 +64,8 @@ class SourceReading:
     value: str | None
     numeric: float | None = None
     available: bool = True
+    # Attribute der Quell-Entity (für health-Node: atomic_quality/degraded/…).
+    attributes: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -86,6 +102,19 @@ class DerivedSensor:
 
 
 @dataclass(frozen=True)
+class DerivedValue:
+    """Benannter Zwischenwert (v1.0): expr | gate | health | latch | previous."""
+
+    name: str
+    kind: str
+    expr: str | None = None          # expr/gate
+    set_expr: str | None = None      # latch
+    reset_expr: str | None = None    # latch
+    atomics: tuple[str, ...] = ()    # health: konsumierte source-keys
+    fail_safe: str | None = None     # off|open|hold_last|unknown (sonst config-Default)
+
+
+@dataclass(frozen=True)
 class CombinedConfig:
     """Konfiguration eines Combined-Atomics."""
 
@@ -98,6 +127,17 @@ class CombinedConfig:
     default_reason: str | None = None
     code_legend: dict[str, Any] = field(default_factory=dict)
     derived: tuple[DerivedSensor, ...] = ()
+    # v1.0:
+    derived_values: tuple[DerivedValue, ...] = ()
+    fail_safe: str = FAIL_SAFE_UNKNOWN
+
+
+@dataclass(frozen=True)
+class CombinedPersisted:
+    """Persistenter Zustand pro Combined (v1.0b: last_state + latch/previous)."""
+
+    last_state: str | None = None
+    node_states: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -114,6 +154,9 @@ class CombinedResult:
     missing_sources: list[str]
     degraded: bool
     degraded_reason: list[str]
+    # v1.0:
+    derived: dict[str, Any] = field(default_factory=dict)
+    node_states: dict[str, Any] = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -188,10 +231,168 @@ def coerce_output(output: Any, output_type: str) -> str:
 # ─────────────────────────────────────────────────────────────────────────────
 
 
+def _autoscalar(reading: SourceReading | None) -> Any:
+    """Quelle → Skalar für die Expression-Engine (Zahl, Rohstring oder None)."""
+    if reading is None or not reading.available or reading.value is None:
+        return None
+    if reading.numeric is not None:
+        return reading.numeric
+    return reading.value
+
+
+def _wrap(value: Any) -> SourceReading:
+    """Derived-Wert → SourceReading-artig (für die v0-Regel-Matcher)."""
+    if value is None:
+        return SourceReading(value=None, available=False)
+    if isinstance(value, bool):
+        return SourceReading(value=("on" if value else "off"), numeric=(1.0 if value else 0.0))
+    if isinstance(value, (int, float)):
+        return SourceReading(value=str(value), numeric=float(value))
+    return SourceReading(value=str(value), numeric=as_num(value))
+
+
+def _failsafe_value(kind: str, mode: str | None, prev: Any) -> Any:
+    if mode == FAIL_SAFE_HOLD_LAST:
+        return prev
+    if kind in (NODE_GATE, NODE_LATCH):
+        if mode == FAIL_SAFE_OFF:
+            return False
+        if mode == FAIL_SAFE_OPEN:
+            return True
+    return None
+
+
+def _failsafe_output(mode: str, prev: Any) -> Any:
+    if mode == FAIL_SAFE_HOLD_LAST:
+        return prev
+    if mode == FAIL_SAFE_OFF:
+        return "off"
+    if mode == FAIL_SAFE_OPEN:
+        return "open"
+    return None
+
+
+def _derived_names(config: CombinedConfig) -> set[str]:
+    return {d.name for d in config.derived_values}
+
+
+def _node_dep_refs(dv: DerivedValue) -> set[str]:
+    out: set[str] = set()
+    for e in (dv.expr, dv.set_expr, dv.reset_expr):
+        if e:
+            try:
+                out |= refs(parse(e))
+            except ExprError:
+                pass
+    out |= set(dv.atomics)
+    return out
+
+
+def _ordered_derived(config: CombinedConfig) -> list[DerivedValue]:
+    """Topo-Sort der derived_values nach Abhängigkeiten (DAG). Zyklus → Listenreihenfolge."""
+    names = _derived_names(config)
+    by_name = {d.name: d for d in config.derived_values}
+    order: list[DerivedValue] = []
+    state: dict[str, int] = {}  # 0=visiting, 1=done
+
+    def visit(name: str) -> None:
+        if state.get(name) == 1 or name not in by_name:
+            return
+        if state.get(name) == 0:
+            return  # Zyklus — abbrechen, validate meldet es
+        state[name] = 0
+        dv = by_name[name]
+        for dep in _node_dep_refs(dv):
+            if dep in names:
+                visit(dep)
+        state[name] = 1
+        order.append(dv)
+
+    for d in config.derived_values:
+        visit(d.name)
+    # Falls durch Zyklus etwas fehlt: anhängen.
+    for d in config.derived_values:
+        if d not in order:
+            order.append(d)
+    return order
+
+
+def _eval_node(
+    dv: DerivedValue, env: dict[str, Any], readings: dict[str, SourceReading],
+    config: CombinedConfig, prev_states: dict[str, Any],
+) -> Any:
+    fail_safe = dv.fail_safe or config.fail_safe
+    prev = prev_states.get(dv.name)
+    if dv.kind == NODE_EXPR:
+        try:
+            v = as_num(eval_expr(dv.expr or "", env))
+        except ExprError:
+            v = None
+        return v if v is not None else _failsafe_value(NODE_EXPR, fail_safe, prev)
+    if dv.kind == NODE_GATE:
+        try:
+            v = as_bool(eval_expr(dv.expr or "", env))
+        except ExprError:
+            v = None
+        return v if v is not None else _failsafe_value(NODE_GATE, fail_safe, prev)
+    if dv.kind == NODE_HEALTH:
+        worst = "ok"
+        for key in dv.atomics:
+            r = readings.get(key)
+            if r is None or not r.available or r.value is None:
+                worst = "problem"
+                break
+            q = str(r.attributes.get("atomic_quality") or "ok")
+            if q == "unavailable" or r.attributes.get("missing_required"):
+                worst = "problem"
+                break
+            if q == "degraded" or r.attributes.get("degraded"):
+                worst = "degraded"
+        return worst
+    if dv.kind == NODE_LATCH:
+        set_v = reset_v = None
+        try:
+            set_v = as_bool(eval_expr(dv.set_expr or "false", env))
+        except ExprError:
+            set_v = None
+        try:
+            reset_v = as_bool(eval_expr(dv.reset_expr or "false", env))
+        except ExprError:
+            reset_v = None
+        if set_v:
+            return True
+        if reset_v:
+            return False
+        if prev is not None:
+            return bool(prev)
+        return _failsafe_value(NODE_LATCH, fail_safe, prev)
+    if dv.kind == NODE_PREVIOUS:
+        return env.get(SELF_REF)
+    return None
+
+
+def _resolve(ref: str, readings: dict[str, SourceReading], env: dict[str, Any]) -> SourceReading | None:
+    if ref in readings:
+        return readings[ref]
+    if ref in env:
+        return _wrap(env[ref])
+    return None
+
+
+def _maybe_ref(output: Any, env: dict[str, Any]) -> Any:
+    """Erlaubt Output ``"${name}"`` → löst auf einen derived/source-Wert auf."""
+    if isinstance(output, str) and output.startswith("${") and output.endswith("}"):
+        return env.get(output[2:-1].strip())
+    return output
+
+
 def evaluate_combined(
-    config: CombinedConfig, readings: dict[str, SourceReading]
+    config: CombinedConfig,
+    readings: dict[str, SourceReading],
+    persisted: "CombinedPersisted | None" = None,
+    now: Any = None,
 ) -> CombinedResult:
-    """Wertet die First-Match-Wins-Regeln aus (LH §6)."""
+    """Wertet derived_values (v1.0) + First-Match-Regeln (v0) aus."""
     source_entities: dict[str, str] = {}
     source_states: dict[str, Any] = {}
     source_available: dict[str, bool] = {}
@@ -210,15 +411,34 @@ def evaluate_combined(
         if not available:
             degraded_reason.append(f"{src.key}: unavailable")
 
+    prev_state = persisted.last_state if persisted else None
+    prev_nodes = dict(persisted.node_states) if persisted else {}
+
+    # ── derived_values: env aufbauen + in Topo-Reihenfolge auswerten ────────
+    env: dict[str, Any] = {src.key: _autoscalar(readings.get(src.key)) for src in config.sources}
+    env[SELF_REF] = prev_state
+    derived_out: dict[str, Any] = {}
+    node_states: dict[str, Any] = {}
+    for dv in _ordered_derived(config):
+        val = _eval_node(dv, env, readings, config, prev_nodes)
+        env[dv.name] = val
+        derived_out[dv.name] = val
+        node_states[dv.name] = val
+
+    # ── Regeln (v0) — referenzieren Quellen, derived oder ${self} ───────────
     matched: int | None = None
     output = config.default_output
     reason = config.default_reason or "default"
     for index, rule in enumerate(config.rules):
-        if _match(readings.get(rule.source), rule.op, rule.value):
+        if _match(_resolve(rule.source, readings, env), rule.op, rule.value):
             matched = index
             output = rule.output
             reason = rule.reason or _auto_reason(rule)
             break
+
+    output = _maybe_ref(output, env)
+    if output is None:
+        output = _failsafe_output(config.fail_safe, prev_state)
 
     degraded = bool(degraded_reason) or bool(missing_sources)
     for s in missing_sources:
@@ -235,7 +455,70 @@ def evaluate_combined(
         missing_sources=missing_sources,
         degraded=degraded,
         degraded_reason=degraded_reason,
+        derived=derived_out,
+        node_states=node_states,
     )
+
+
+def validate_combined_v1(config: CombinedConfig) -> list[str]:
+    """Dry-Run-Validierung: Parse, unbekannte Refs, Zyklen, Zeit-Latch (since=v1.1)."""
+    errors: list[str] = []
+    names = _derived_names(config)
+    source_keys = {s.key for s in config.sources}
+    allowed = source_keys | names | {SELF_REF}
+
+    def check_expr(label: str, e: str | None, is_latch: bool = False) -> None:
+        if not e:
+            return
+        try:
+            ast = parse(e)
+        except ExprError as err:
+            errors.append(f"{label}: Parse-Fehler: {err}")
+            return
+        for r in refs(ast):
+            if r not in allowed:
+                errors.append(f"{label}: unbekannte Referenz ${{{r}}}")
+        v11 = func_names(ast) & {"since"}
+        if v11:
+            errors.append(
+                f"{label}: '{sorted(v11)[0]}' ist v1.1 (Timer/Scheduling) — in v1.0 nicht erlaubt"
+            )
+
+    for dv in config.derived_values:
+        if dv.kind not in NODE_KINDS:
+            errors.append(f"{dv.name}: unbekannter Node-Typ {dv.kind!r}")
+            continue
+        if dv.kind in (NODE_EXPR, NODE_GATE):
+            check_expr(dv.name, dv.expr)
+        elif dv.kind == NODE_LATCH:
+            check_expr(f"{dv.name}.set", dv.set_expr, is_latch=True)
+            check_expr(f"{dv.name}.reset", dv.reset_expr, is_latch=True)
+        elif dv.kind == NODE_HEALTH:
+            for a in dv.atomics:
+                if a not in source_keys:
+                    errors.append(f"{dv.name}: health-Quelle {a!r} ist keine Source")
+
+    # Zyklus-Erkennung
+    by_name = {d.name: d for d in config.derived_values}
+    visiting: set[str] = set()
+    done: set[str] = set()
+
+    def dfs(name: str, stack: list[str]) -> None:
+        if name in done or name not in by_name:
+            return
+        if name in visiting:
+            errors.append(f"Zyklus in derived_values: {' → '.join(stack + [name])}")
+            return
+        visiting.add(name)
+        for dep in _node_dep_refs(by_name[name]):
+            if dep in names:
+                dfs(dep, stack + [name])
+        visiting.discard(name)
+        done.add(name)
+
+    for d in config.derived_values:
+        dfs(d.name, [])
+    return errors
 
 
 def _auto_reason(rule: CombinedRule) -> str:
@@ -355,8 +638,31 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
             )
         )
 
+    derived_values: list[DerivedValue] = []
+    for item in raw.get("derived_values") or []:
+        if not isinstance(item, dict):
+            continue
+        name = str(item.get("name") or "").strip()
+        kind = str(item.get("kind") or "").strip()
+        if not name or kind not in NODE_KINDS:
+            continue
+        atomics = item.get("atomics") or []
+        derived_values.append(
+            DerivedValue(
+                name=name,
+                kind=kind,
+                expr=(str(item["expr"]) if item.get("expr") is not None else None),
+                set_expr=(str(item["set"]) if item.get("set") is not None else None),
+                reset_expr=(str(item["reset"]) if item.get("reset") is not None else None),
+                atomics=tuple(str(a) for a in atomics if a),
+                fail_safe=(str(item["fail_safe"]) if item.get("fail_safe") else None),
+            )
+        )
+
     legend = raw.get("code_legend")
     code_legend = dict(legend) if isinstance(legend, dict) else {}
+    diagnostics = raw.get("diagnostics") if isinstance(raw.get("diagnostics"), dict) else {}
+    fail_safe = str(raw.get("fail_safe") or diagnostics.get("fail_safe") or FAIL_SAFE_UNKNOWN)
 
     return CombinedConfig(
         slug=slug,
@@ -370,4 +676,6 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
         ),
         code_legend=code_legend,
         derived=tuple(derived),
+        derived_values=tuple(derived_values),
+        fail_safe=fail_safe,
     )

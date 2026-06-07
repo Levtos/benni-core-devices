@@ -161,7 +161,15 @@ dry-run before applying.
   entity — pick the primary contact's battery or omit.
 
 ## Workflow
-1. **Read current config** (avoid duplicates): WS `benni_core_devices/export_config`.
+> Import/export is available **both** as WebSocket commands and as **HA services**
+> (callable via MCP `ha_call_service`, with `return_response: true`):
+> `benni_core_devices.bulk_import` `{{payload, dry_run, replace}}` → returns the
+> report; `benni_core_devices.export_config` → returns `{{yaml}}`. When driving
+> via MCP, prefer the services. `dry_run` defaults to true; `replace: true` does
+> a clean slate (clears existing devices/combineds/groups).
+
+1. **Read current config** (avoid duplicates): service `export_config` (MCP) or
+   WS `benni_core_devices/export_config`.
 2. **Discover** raw entities via the HA MCP tools (search/list/states).
 3. **Draft** the devices YAML (schema below) and any combined configs.
 4. **Validate devices**: WS `benni_core_devices/bulk_import` with `dry_run: true`.

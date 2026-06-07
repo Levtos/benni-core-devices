@@ -37,3 +37,31 @@ clear_override:
       selector:
         text:
 
+bulk_import:
+  name: Bulk import (agent/MCP)
+  description: >
+    Import devices/combineds/light_groups from a YAML payload. Returns a report
+    (accepted/blocked, missing_required, derived sources, resulting entity_ids).
+    Default dry_run=true (validate only). Set dry_run=false to apply,
+    replace=true for a clean slate (existing entries are cleared).
+  fields:
+    payload:
+      required: true
+      selector:
+        text:
+          multiline: true
+    dry_run:
+      required: false
+      default: true
+      selector:
+        boolean:
+    replace:
+      required: false
+      default: false
+      selector:
+        boolean:
+
+export_config:
+  name: Export config (agent/MCP)
+  description: Return the current devices/combineds/light_groups config as YAML.
+

@@ -413,14 +413,58 @@ def _apply_bulk(
     valid: list[dict[str, Any]],
     imported_groups: dict[str, Any],
     imported_combineds: dict[str, Any],
+    replace: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    devices = _devices(entry)
+    # replace=True → Clean-Slate: bestehende Einträge werden NICHT gemerged.
+    devices = {} if replace else _devices(entry)
     for item in valid:
         slug = str(item.pop(CONF_SLUG))
         devices[slug] = item
-    groups = {**_groups(entry), **imported_groups}
-    combineds = {**_combineds(entry), **imported_combineds}
+    groups = dict(imported_groups) if replace else {**_groups(entry), **imported_groups}
+    combineds = dict(imported_combineds) if replace else {**_combineds(entry), **imported_combineds}
     return devices, groups, combineds
+
+
+async def run_bulk_import(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    payload: str,
+    dry_run: bool,
+    replace: bool = False,
+) -> dict[str, Any]:
+    """Geteilte Bulk-Import-Logik für WS-Command UND HA-Service (MCP-fähig).
+
+    Raises ValueError/yaml.YAMLError bei ungültigem Payload.
+    """
+    valid, imported_groups, imported_combineds = _parse_bulk(payload)
+    profile = entry_profile(entry)
+    report = _import_report(valid, profile)
+    combined_report = _combined_report(imported_combineds, profile)
+    base = {
+        "report": report,
+        "combined_report": combined_report,
+        "combineds_in": len(imported_combineds),
+    }
+    if dry_run:
+        return {
+            "dry_run": True, "replace": replace,
+            "devices": len(valid), "groups": len(imported_groups),
+            "combineds": len(imported_combineds), **base,
+        }
+    devices, groups, combineds = _apply_bulk(
+        entry, valid, imported_groups, imported_combineds, replace
+    )
+    await _update_options(hass, entry, {
+        **entry.options,
+        CONF_DEVICES: devices,
+        CONF_LIGHT_GROUPS: groups,
+        CONF_COMBINEDS: combineds,
+    })
+    return {
+        "dry_run": False, "replace": replace,
+        "devices": len(devices), "groups": len(groups),
+        "combineds": len(combineds), **base,
+    }
 
 
 def _export_yaml(entry: ConfigEntry) -> str:
@@ -585,6 +629,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         vol.Required("type"): WS_BULK_IMPORT,
         vol.Required("payload"): str,
         vol.Optional("dry_run"): bool,
+        vol.Optional("replace"): bool,
     })
     @websocket_api.require_admin
     @websocket_api.async_response
@@ -594,40 +639,14 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
             return
         try:
-            imported_devices, imported_groups, imported_combineds = _parse_bulk(msg["payload"])
+            result = await run_bulk_import(
+                hass, entry, msg["payload"],
+                bool(msg.get("dry_run")), bool(msg.get("replace")),
+            )
         except (TypeError, ValueError, yaml.YAMLError) as err:
             connection.send_error(msg["id"], "invalid_bulk", str(err))
             return
-        profile = entry_profile(entry)
-        report = _import_report(imported_devices, profile)
-        combined_report = _combined_report(imported_combineds, profile)
-        if msg.get("dry_run"):
-            connection.send_result(msg["id"], {
-                "dry_run": True,
-                "devices": len(imported_devices),
-                "groups": len(imported_groups),
-                "combineds": len(imported_combineds),
-                "report": report,
-                "combined_report": combined_report,
-            })
-            return
-        devices, groups, combineds = _apply_bulk(
-            entry, imported_devices, imported_groups, imported_combineds
-        )
-        await _update_options(hass, entry, {
-            **entry.options,
-            CONF_DEVICES: devices,
-            CONF_LIGHT_GROUPS: groups,
-            CONF_COMBINEDS: combineds,
-        })
-        connection.send_result(msg["id"], {
-            "dry_run": False,
-            "devices": len(devices),
-            "groups": len(groups),
-            "combineds": len(combineds),
-            "report": report,
-            "combined_report": combined_report,
-        })
+        connection.send_result(msg["id"], result)
 
     @websocket_api.websocket_command({vol.Required("type"): WS_EXPORT_CONFIG})
     @websocket_api.require_admin

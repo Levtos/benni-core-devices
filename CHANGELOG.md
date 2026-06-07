@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.5 — Import/Export als HA-Service (MCP-/Agenten-fähig)
+
+- **Neuer Service `benni_core_devices.bulk_import`** (`payload`, `dry_run`,
+  `replace`) mit Response → der Import ist jetzt **per `ha_call_service`** (also
+  von Claude Code / Codex über MCP) ausführbar, nicht mehr nur übers Panel.
+  Default `dry_run=true` (sicher); `replace=true` = Clean-Slate (bestehende
+  Devices/Combineds/Groups werden ersetzt statt gemerged).
+- **Neuer Service `benni_core_devices.export_config`** (Response: `yaml`).
+- Damit ist der Agenten-Workflow end-to-end über MCP fahrbar: export → discover
+  → bulk_import dry_run → apply. WS-Commands bleiben unverändert (geteilte
+  Logik `run_bulk_import`). `replace`-Option auch im WS-`bulk_import`.
+- Nebenfix: Override-Services waren mit falscher Handler-Signatur registriert
+  (nie funktionsfähig) — korrigiert.
+
 ## 0.3.4 — Combined-Import (Round-Trip)
 
 - **`bulk_import` verarbeitet jetzt auch `combineds:`** (Dict slug → config) —

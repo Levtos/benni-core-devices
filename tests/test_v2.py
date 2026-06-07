@@ -89,6 +89,26 @@ def test_passthrough_fresh_uses_raw_state():
     assert r.fail_safe_active is False
 
 
+def test_passthrough_stable_old_state_is_available():
+    # Regression: ein lange unveränderter Kontakt (altes last_updated) ist
+    # NORMAL verfügbar — kein 600s-Frischefenster bei passthrough.
+    old = L.SlotReading(value="off", numeric=None, attributes={}, last_updated=NOW - timedelta(days=1))
+    inp = _inp({"open_contact": old}, integration_slot="open_contact", state_slot="open_contact")
+    r = L.compute_passthrough(_lc("opening", fail_safe="open"), inp, _p(), NOW)
+    assert r.state == "off"
+    assert r.available is True
+    assert r.fail_safe_active is False
+
+
+def test_numeric_stable_old_value_is_available():
+    old = L.SlotReading(value="21.5", numeric=21.5, attributes={}, last_updated=NOW - timedelta(days=1))
+    inp = _inp({"temperature_source": old}, state_slot="temperature_source")
+    r = L.compute_numeric(_lc("environment"), inp, _p(), NOW)
+    assert r.state == "21.5"
+    assert r.available is True
+    assert r.fail_safe_active is False
+
+
 def test_passthrough_fail_safe_open_when_stale():
     inp = _inp({"open_contact": _reading(None)}, integration_slot="open_contact", state_slot="open_contact")
     r = L.compute_passthrough(_lc("opening", fail_safe="open"), inp, _p(), NOW)

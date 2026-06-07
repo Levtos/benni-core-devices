@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.4 — Combined-Import (Round-Trip)
+
+- **`bulk_import` verarbeitet jetzt auch `combineds:`** (Dict slug → config) —
+  zusätzlich zu `devices:`/`light_groups:`. Damit voller Round-Trip mit dem
+  bereits vorhandenen `export_config` und Agenten können Combineds im selben
+  YAML bauen. Geräte sind beim Import jetzt optional (combined-only möglich).
+- Dry-Run-Report zeigt einen separaten **Combined-Abschnitt** (Output-Typ,
+  Quellenzahl, blockierte/abgeleitete Quellen, resultierende Entity-ID).
+- Agent-Briefing aktualisiert (Combineds via bulk_import ODER `set_combined`).
+
 ## 0.3.3 — Fix: Verfügbarkeit bei stabilen Zuständen (alle Pfade)
 
 - **Bug:** Verfügbarkeit wurde über ein **600s-Zeitfenster** (`last_updated`)

@@ -112,22 +112,25 @@ devices:
 ```"""
 
 _COMBINED_EXAMPLE = """```yaml
-# Combineds are NOT part of bulk_import. Create each via the WS command
-# `benni_core_devices/set_combined` with {slug?, display_name, config}.
-config:
-  output_type: code                    # enum | code | boolean | number
-  sources:
-    - {key: open, role: open_contact, entity: binary_sensor.left_open}
-    - {key: tilt, role: tilt_contact, entity: binary_sensor.left_tilt}
-  rules:                               # first-match-wins, in order
-    - {source: open, op: unavailable, output: 9, reason: "open unclear"}
-    - {source: open, op: eq, value: "on", output: 2, reason: open}
-    - {source: tilt, op: eq, value: "on", output: 1, reason: tilted}
-  default_output: 0
-  default_reason: closed
-  code_legend: {"0": closed, "1": tilted, "2": open, "9": unclear}
-  derived:
-    - {slug: any_open, name: "Any Open", device_class: opening, target: open_contact, op: eq, value: "on"}
+# Combineds may live in the SAME bulk_import YAML under `combineds:`
+# (dict slug -> config), OR be created individually via WS `set_combined`
+# ({slug?, display_name, config}).
+combineds:
+  opening_state:
+    display_name: "Opening State"
+    output_type: code                  # enum | code | boolean | number
+    sources:
+      - {key: open, role: open_contact, entity: binary_sensor.left_open}
+      - {key: tilt, role: tilt_contact, entity: binary_sensor.left_tilt}
+    rules:                             # first-match-wins, in order
+      - {source: open, op: unavailable, output: 9, reason: "open unclear"}
+      - {source: open, op: eq, value: "on", output: 2, reason: open}
+      - {source: tilt, op: eq, value: "on", output: 1, reason: tilted}
+    default_output: 0
+    default_reason: closed
+    code_legend: {"0": closed, "1": tilted, "2": open, "9": unclear}
+    derived:
+      - {slug: any_open, name: "Any Open", device_class: opening, target: open_contact, op: eq, value: "on"}
 ```"""
 
 
@@ -165,8 +168,9 @@ dry-run before applying.
    Resolve every `missing_required` and `derived_sources` entry; note the resulting
    `entity_id`s.
 5. **Apply devices**: same command with `dry_run: false`.
-6. **Combineds**: create each via WS `benni_core_devices/set_combined`
-   `{{slug?, display_name, config}}` (NOT via bulk_import).
+6. **Combineds**: either include a `combineds:` block in the bulk_import YAML
+   (dict slug → config; validated by the same dry-run), or create each via WS
+   `benni_core_devices/set_combined` `{{slug?, display_name, config}}`.
 
 ## Roles
 {_role_table()}

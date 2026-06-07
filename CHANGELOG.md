@@ -1,17 +1,23 @@
 # Changelog
 
-## 0.3.3 — Fix: passthrough/numeric Verfügbarkeit (stabile Zustände)
+## 0.3.3 — Fix: Verfügbarkeit bei stabilen Zuständen (alle Pfade)
 
-- **Bug:** Passthrough-Klassen (opening/light/cover/climate) und numeric
-  (environment) nutzten fälschlich das 600s-Frischefenster des Watt-Power-
-  Modells. Ein lange unveränderter Kontakt/Cover/Climate-State (altes
-  `last_updated`) fiel dadurch als „nicht frisch" raus → `available: false` +
-  `fail_safe_active`, obwohl die Quelle gültig war (z. B. Patio-Door-Atomic
-  dauerhaft `unavailable`).
-- **Fix:** `compute_passthrough`/`compute_numeric` werten Verfügbarkeit jetzt
-  rein über **Wert-Präsenz** aus (nicht `unavailable`/`unknown`) — kein
-  Zeitfenster. Das gesperrte Watt-/Power-Modell (`compute_device`,
-  R-DC-01..09) bleibt unverändert. Tests ergänzt.
+- **Bug:** Verfügbarkeit wurde über ein **600s-Zeitfenster** (`last_updated`)
+  bewertet. Ein lange unveränderter Zustand (Kontakt/Cover/Climate `off`, ein
+  stabiler `switch on/off`, ein „off"-Media ohne Watt) hat ein altes
+  `last_updated` → fiel fälschlich als „nicht frisch" raus → `available: false`
+  + `fail_safe_active`/sticky, obwohl die Quelle gültig war (z. B. Patio-Door-
+  Atomic dauerhaft `unavailable`).
+- **Fix:** Verfügbarkeit + Integration-Quelle werten jetzt **Wert-Präsenz** aus
+  (nicht `unavailable`/`unknown`) — kein Zeitfenster. Betrifft beide Pfade:
+  `compute_passthrough`/`compute_numeric` **und** `compute_device`
+  (media/audio/console/power).
+- **Power-Semantik unverändert:** Entscheidungsreihenfolge Override → Integration
+  → Watt → Sticky-Hold, Watt-Buckets, `watt_disagrees`, Boot-Phase bleiben
+  identisch (R-DC-Tests grün). Echte Ausfälle (Wert `None`) lösen weiterhin
+  Watt-Fallback/Sticky/Fail-Safe aus.
+- `consumes` listet jetzt alle konsumierten Entities (Sources + Controls +
+  Metadaten), nicht nur Sources.
 
 ## 0.3.2 — Agent-Briefing-Generator (Import für LLM-Agenten)
 

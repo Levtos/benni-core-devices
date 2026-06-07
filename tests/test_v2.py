@@ -100,6 +100,19 @@ def test_passthrough_stable_old_state_is_available():
     assert r.fail_safe_active is False
 
 
+def test_compute_device_stable_old_integration_is_available():
+    # Regression: stabiler Switch/Media (altes last_updated, gültiger Wert) ist
+    # verfügbar — kein 600s-Fenster mehr im Power-Pfad.
+    old = L.SlotReading(value="on", numeric=None, attributes={}, last_updated=NOW - timedelta(days=1))
+    inp = L.DeviceInputs(slots={"primary_state": old}, integration_slot="primary_state",
+                         state_slot="primary_state", watt_slot=None, boot_phase_active=False)
+    cfg = L.DeviceConfig(slug="plug", display_name="Plug", device_type="power_device")
+    r = L.compute_device(cfg, inp, _p(), NOW)
+    assert r.available is True
+    assert r.powered is True
+    assert r.power_source == "integration"
+
+
 def test_numeric_stable_old_value_is_available():
     old = L.SlotReading(value="21.5", numeric=21.5, attributes={}, last_updated=NOW - timedelta(days=1))
     inp = _inp({"temperature_source": old}, state_slot="temperature_source")

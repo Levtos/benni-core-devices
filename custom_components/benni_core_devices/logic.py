@@ -252,7 +252,10 @@ def compute_device(
     watt_reading = inputs.slots.get(inputs.watt_slot) if inputs.watt_slot else None
 
     watt = watt_reading.numeric if watt_reading is not None else None
-    integration_fresh = _is_fresh(integration_reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    # v2-Optimierung: Integration gilt als "frisch", sobald sie einen gültigen
+    # Wert hat (echte Ausfälle = None). Kein 600s-Zeitfenster mehr — sonst
+    # erscheint ein stabiler on/off-Switch oder ein "off"-Media fälschlich stale.
+    integration_fresh = _has_value(integration_reading)
     integration_bool = _as_bool(integration_reading.value) if integration_reading else None
     watt_fresh = watt_reading is not None and watt is not None
 
@@ -354,11 +357,14 @@ def _compute_state(
 
 
 def _compute_available(inputs: DeviceInputs, now: datetime) -> bool:
-    """R-DC-03: available = mindestens ein konfigurierter Slot ist frisch."""
-    return any(
-        _is_fresh(r, now, AVAILABILITY_FRESHNESS_SECONDS)
-        for r in inputs.slots.values()
-    )
+    """R-DC-03: available = mindestens eine Quelle hat einen gültigen Wert.
+
+    v2-Optimierung: Wert-Präsenz statt Zeitfenster. HA bildet echte Ausfälle als
+    `unavailable`/`unknown` (= Wert None) ab; ein stabiler, lange unveränderter
+    Zustand (Switch/Contact/Media off) ist normal verfügbar. Die Power-
+    Entscheidungen (Sticky/Watt/Override/Buckets) bleiben davon unberührt.
+    """
+    return any(_has_value(r) for r in inputs.slots.values())
 
 
 def _sticky_age_seconds(persisted: DevicePersisted, now: datetime) -> float | None:

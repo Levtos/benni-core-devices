@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.3 — Fix: Verfügbarkeit bei stabilen Zuständen (alle Pfade)
+
+- **Bug:** Verfügbarkeit wurde über ein **600s-Zeitfenster** (`last_updated`)
+  bewertet. Ein lange unveränderter Zustand (Kontakt/Cover/Climate `off`, ein
+  stabiler `switch on/off`, ein „off"-Media ohne Watt) hat ein altes
+  `last_updated` → fiel fälschlich als „nicht frisch" raus → `available: false`
+  + `fail_safe_active`/sticky, obwohl die Quelle gültig war (z. B. Patio-Door-
+  Atomic dauerhaft `unavailable`).
+- **Fix:** Verfügbarkeit + Integration-Quelle werten jetzt **Wert-Präsenz** aus
+  (nicht `unavailable`/`unknown`) — kein Zeitfenster. Betrifft beide Pfade:
+  `compute_passthrough`/`compute_numeric` **und** `compute_device`
+  (media/audio/console/power).
+- **Power-Semantik unverändert:** Entscheidungsreihenfolge Override → Integration
+  → Watt → Sticky-Hold, Watt-Buckets, `watt_disagrees`, Boot-Phase bleiben
+  identisch (R-DC-Tests grün). Echte Ausfälle (Wert `None`) lösen weiterhin
+  Watt-Fallback/Sticky/Fail-Safe aus.
+- `consumes` listet jetzt alle konsumierten Entities (Sources + Controls +
+  Metadaten), nicht nur Sources.
+
 ## 0.3.2 — Agent-Briefing-Generator (Import für LLM-Agenten)
 
 - **Neuer „Agent-Briefing"-Generator** (Import/Export-Seite + WS

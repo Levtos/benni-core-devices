@@ -72,7 +72,7 @@ def build_slot_diagnostics(
         "degraded": degraded,
         "degraded_reason": reason,
         "atomic_quality": quality,
-        "consumes": sorted(source_entities.values()),
+        "consumes": sorted(config.compute_entities().values()),
         "fail_safe_active": result.fail_safe_active,
     }
 

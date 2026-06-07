@@ -180,6 +180,19 @@ def _as_bool(value: str | None) -> bool | None:
     return None
 
 
+def _has_value(reading: SlotReading | None) -> bool:
+    """Slot hat einen gültigen Wert (nicht unavailable/unknown).
+
+    Für passthrough/numeric: KEIN Zeitfenster — ein stabiler Kontakt/Cover/
+    Climate-State (lange unverändert → altes last_updated) ist normal verfügbar.
+    """
+    return reading is not None and reading.value is not None
+
+
+def _any_value(inputs: "DeviceInputs") -> bool:
+    return any(_has_value(r) for r in inputs.slots.values())
+
+
 def _is_fresh(reading: SlotReading | None, now: datetime, max_age: int) -> bool:
     """Slot frisch? Hat einen Wert UND ist nicht zu alt."""
     if reading is None or reading.value is None:
@@ -239,7 +252,10 @@ def compute_device(
     watt_reading = inputs.slots.get(inputs.watt_slot) if inputs.watt_slot else None
 
     watt = watt_reading.numeric if watt_reading is not None else None
-    integration_fresh = _is_fresh(integration_reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    # v2-Optimierung: Integration gilt als "frisch", sobald sie einen gültigen
+    # Wert hat (echte Ausfälle = None). Kein 600s-Zeitfenster mehr — sonst
+    # erscheint ein stabiler on/off-Switch oder ein "off"-Media fälschlich stale.
+    integration_fresh = _has_value(integration_reading)
     integration_bool = _as_bool(integration_reading.value) if integration_reading else None
     watt_fresh = watt_reading is not None and watt is not None
 
@@ -341,11 +357,14 @@ def _compute_state(
 
 
 def _compute_available(inputs: DeviceInputs, now: datetime) -> bool:
-    """R-DC-03: available = mindestens ein konfigurierter Slot ist frisch."""
-    return any(
-        _is_fresh(r, now, AVAILABILITY_FRESHNESS_SECONDS)
-        for r in inputs.slots.values()
-    )
+    """R-DC-03: available = mindestens eine Quelle hat einen gültigen Wert.
+
+    v2-Optimierung: Wert-Präsenz statt Zeitfenster. HA bildet echte Ausfälle als
+    `unavailable`/`unknown` (= Wert None) ab; ein stabiler, lange unveränderter
+    Zustand (Switch/Contact/Media off) ist normal verfügbar. Die Power-
+    Entscheidungen (Sticky/Watt/Override/Buckets) bleiben davon unberührt.
+    """
+    return any(_has_value(r) for r in inputs.slots.values())
 
 
 def _sticky_age_seconds(persisted: DevicePersisted, now: datetime) -> float | None:
@@ -394,7 +413,7 @@ def compute_passthrough(
     Keine Watt-/Sticky-Mechanik. ``fail_safe`` greift nur, wenn keine Quelle
     frisch ist. Override (R-DC-07) bleibt wirksam.
     """
-    available = _compute_available(inputs, now)
+    available = _any_value(inputs)
     state_reading = inputs.slots.get(inputs.state_slot) if inputs.state_slot else None
 
     override = _active_override(persisted, now)
@@ -413,7 +432,7 @@ def compute_passthrough(
             extra=state_reading.attributes if state_reading else {},
         )
 
-    fresh = _is_fresh(state_reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    fresh = _has_value(state_reading)
     if fresh and state_reading is not None and state_reading.value is not None:
         state = state_reading.value
         powered = _as_bool(state)
@@ -452,7 +471,7 @@ def compute_numeric(
     now: datetime,
 ) -> DeviceResult:
     """Numeric: state = primärer Messwert (state_role). Übrige Werte → Attribute."""
-    available = _compute_available(inputs, now)
+    available = _any_value(inputs)
     reading = inputs.slots.get(inputs.state_slot) if inputs.state_slot else None
 
     override = _active_override(persisted, now)
@@ -467,7 +486,7 @@ def compute_numeric(
             extra=reading.attributes if reading else {},
         )
 
-    fresh = _is_fresh(reading, now, AVAILABILITY_FRESHNESS_SECONDS)
+    fresh = _has_value(reading)
     if fresh and reading is not None and reading.value is not None:
         state = reading.value
         fail_safe_active = False

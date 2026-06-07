@@ -20,13 +20,26 @@ function reportCard(result) {
       <td>${issues || `<span class="muted">—</span>`}</td>
     </tr>`;
   }).join("");
+  const cRows = (result.combined_report || []).map((r) => {
+    const sev = r.derived_sources && r.derived_sources.length ? "err" : (r.accepted ? "ok" : "warn");
+    const issues = (r.derived_sources || []).map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`).join("");
+    return `<tr>
+      <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
+      <td class="mono">${esc(r.entity_id)}</td>
+      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen</td>
+      <td>${issues || `<span class="muted">—</span>`}</td>
+    </tr>`;
+  }).join("");
+  const anyErr = (result.report || []).some((r) => r.derived_sources.length)
+    || (result.combined_report || []).some((r) => r.derived_sources && r.derived_sources.length);
   return `
-    <div class="warnbox ${result.report?.some((r) => r.derived_sources.length) ? "err" : ""}" style="margin-top:14px; ${result.report?.some((r) => r.derived_sources.length) ? "" : "border-color:var(--line);background:#24262f;color:var(--muted)"}">
+    <div class="warnbox ${anyErr ? "err" : ""}" style="margin-top:14px; ${anyErr ? "" : "border-color:var(--line);background:#24262f;color:var(--muted)"}">
       <div class="row spread"><b>${result.dry_run ? "Dry-Run Vorschau" : "Import-Ergebnis"}</b>
-        <span>${chip("info", `${result.devices} Devices`)} ${chip("info", `${result.groups} Groups`)}</span></div>
+        <span>${chip("info", `${result.devices} Devices`)} ${chip("info", `${result.combineds ?? 0} Combineds`)} ${chip("info", `${result.groups} Groups`)}</span></div>
     </div>
     ${rows ? `<table style="margin-top:8px"><thead><tr><th>Status</th><th>Entity</th><th>Typ</th><th>Hinweise</th></tr></thead><tbody>${rows}</tbody></table>`
-      : `<div class="muted" style="margin-top:8px">Keine Devices im Payload.</div>`}`;
+      : `<div class="muted" style="margin-top:8px">Keine Devices im Payload.</div>`}
+    ${cRows ? `<h2 style="margin-top:12px;font-size:13px">Combineds</h2><table><thead><tr><th>Status</th><th>Entity</th><th>Output</th><th>Hinweise</th></tr></thead><tbody>${cRows}</tbody></table>` : ""}`;
 }
 
 function renderMemberPicker(root, ctx, st) {

@@ -308,24 +308,55 @@ def _device_conf_from_msg(msg: dict[str, Any], existing: set[str]) -> tuple[str,
 # ── BULK-IMPORT + DRY-RUN ────────────────────────────────────────────────────
 
 
-def _parse_bulk(raw: str) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+def _normalize_combineds(raw: Any) -> dict[str, dict[str, Any]]:
+    """Akzeptiert combineds als Dict {slug: conf} (Export-Format) oder Liste."""
+    out: dict[str, dict[str, Any]] = {}
+    if isinstance(raw, dict):
+        for slug, conf in raw.items():
+            if isinstance(conf, dict):
+                out[str(slug)] = dict(conf)
+    elif isinstance(raw, list):
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            slug = str(item.get(CONF_SLUG) or slugify(str(item.get(CONF_DISPLAY_NAME, "")))).strip()
+            if not slug:
+                continue
+            if isinstance(item.get("config"), dict):
+                conf = dict(item["config"])
+                if item.get(CONF_DISPLAY_NAME):
+                    conf[CONF_DISPLAY_NAME] = item[CONF_DISPLAY_NAME]
+            else:
+                conf = {k: v for k, v in item.items() if k != CONF_SLUG}
+            out[slug] = conf
+    return out
+
+
+def _parse_bulk(
+    raw: str,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     parsed = yaml.safe_load(raw) if raw and raw.strip() else None
     if isinstance(parsed, dict):
         devices = parsed.get(CONF_DEVICES, [])
         groups = parsed.get(CONF_LIGHT_GROUPS, {})
+        combineds_raw = parsed.get(CONF_COMBINEDS, {})
     else:
         devices = parsed
         groups = {}
-    if isinstance(devices, list):
-        for item in devices:
-            if isinstance(item, dict) and not item.get(CONF_SLUG):
-                derived = slugify(str(item.get(CONF_DISPLAY_NAME, "")))
-                if derived:
-                    item[CONF_SLUG] = derived
-    valid, errors = validate_import_payload(devices)
-    if errors:
-        raise ValueError("\n".join(errors))
-    return valid, (groups if isinstance(groups, dict) else {})
+        combineds_raw = {}
+    valid: list[dict[str, Any]] = []
+    if devices:  # Geräte sind optional, wenn nur Combineds importiert werden.
+        if isinstance(devices, list):
+            for item in devices:
+                if isinstance(item, dict) and not item.get(CONF_SLUG):
+                    derived = slugify(str(item.get(CONF_DISPLAY_NAME, "")))
+                    if derived:
+                        item[CONF_SLUG] = derived
+        valid, errors = validate_import_payload(devices)
+        if errors:
+            raise ValueError("\n".join(errors))
+    combineds = _normalize_combineds(combineds_raw)
+    return valid, (groups if isinstance(groups, dict) else {}), combineds
 
 
 def _import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, Any]]:
@@ -352,13 +383,44 @@ def _import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, 
     return report
 
 
-def _apply_bulk(entry: ConfigEntry, valid: list[dict[str, Any]], imported_groups: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any]]:
+def _combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list[dict[str, Any]]:
+    from .combined import parse_combined
+
+    own = _own_prefixes(profile)
+    rep: list[dict[str, Any]] = []
+    for slug, conf in combineds.items():
+        cfg = parse_combined(slug, conf)
+        n = len(cfg.sources) if cfg else 0
+        derived_sources = []
+        for src in (cfg.sources if cfg else []):
+            if src.entity:
+                cat = classify_source_entity(src.entity, own_prefixes=own)
+                if cat:
+                    derived_sources.append(source_warning_text(cat, src.entity))
+        rep.append({
+            "slug": slug,
+            "output_type": cfg.output_type if cfg else "?",
+            "sources": n,
+            "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
+            "derived_sources": derived_sources,
+            "accepted": cfg is not None and not derived_sources,
+        })
+    return rep
+
+
+def _apply_bulk(
+    entry: ConfigEntry,
+    valid: list[dict[str, Any]],
+    imported_groups: dict[str, Any],
+    imported_combineds: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
     devices = _devices(entry)
     for item in valid:
         slug = str(item.pop(CONF_SLUG))
         devices[slug] = item
     groups = {**_groups(entry), **imported_groups}
-    return devices, groups
+    combineds = {**_combineds(entry), **imported_combineds}
+    return devices, groups, combineds
 
 
 def _export_yaml(entry: ConfigEntry) -> str:
@@ -532,18 +594,40 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
             return
         try:
-            imported_devices, imported_groups = _parse_bulk(msg["payload"])
+            imported_devices, imported_groups, imported_combineds = _parse_bulk(msg["payload"])
         except (TypeError, ValueError, yaml.YAMLError) as err:
             connection.send_error(msg["id"], "invalid_bulk", str(err))
             return
         profile = entry_profile(entry)
         report = _import_report(imported_devices, profile)
+        combined_report = _combined_report(imported_combineds, profile)
         if msg.get("dry_run"):
-            connection.send_result(msg["id"], {"dry_run": True, "devices": len(imported_devices), "groups": len(imported_groups), "report": report})
+            connection.send_result(msg["id"], {
+                "dry_run": True,
+                "devices": len(imported_devices),
+                "groups": len(imported_groups),
+                "combineds": len(imported_combineds),
+                "report": report,
+                "combined_report": combined_report,
+            })
             return
-        devices, groups = _apply_bulk(entry, imported_devices, imported_groups)
-        await _update_options(hass, entry, {**entry.options, CONF_DEVICES: devices, CONF_LIGHT_GROUPS: groups})
-        connection.send_result(msg["id"], {"dry_run": False, "devices": len(devices), "groups": len(groups), "report": report})
+        devices, groups, combineds = _apply_bulk(
+            entry, imported_devices, imported_groups, imported_combineds
+        )
+        await _update_options(hass, entry, {
+            **entry.options,
+            CONF_DEVICES: devices,
+            CONF_LIGHT_GROUPS: groups,
+            CONF_COMBINEDS: combineds,
+        })
+        connection.send_result(msg["id"], {
+            "dry_run": False,
+            "devices": len(devices),
+            "groups": len(groups),
+            "combineds": len(combineds),
+            "report": report,
+            "combined_report": combined_report,
+        })
 
     @websocket_api.websocket_command({vol.Required("type"): WS_EXPORT_CONFIG})
     @websocket_api.require_admin

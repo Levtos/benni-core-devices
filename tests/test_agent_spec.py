@@ -39,6 +39,7 @@ def test_json_schema_shape():
     assert device["properties"]["slug"]["pattern"] == "^[a-z0-9_]+$"
     binding = schema["$defs"]["binding"]
     assert "open_contact" in binding["properties"]["role"]["enum"]
+    assert binding["properties"]["attribute"]["type"] == "string"
     # required-Felder
     assert "slug" in device["required"] and "atomic_class" in device["required"]
 

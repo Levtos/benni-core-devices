@@ -34,6 +34,13 @@ def build_slot_diagnostics(
     config: DeviceConfigV2, inputs: DeviceInputs, result: DeviceResult
 ) -> dict[str, Any]:
     source_entities = config.source_entities()
+    source_attributes = {
+        role: attr
+        for role, attr in (
+            (role, config.attribute_for_role(role)) for role in source_entities
+        )
+        if attr
+    }
     source_roles = list(source_entities.keys())
     source_states: dict[str, Any] = {}
     source_available: dict[str, bool] = {}
@@ -46,7 +53,25 @@ def build_slot_diagnostics(
         if not available:
             unavailable.append(role)
 
-    missing_required = config.missing_required()
+    missing_required = list(config.missing_required())
+    spec = config.spec
+    if spec and spec.required_roles:
+        configured = set(source_entities)
+        unavailable_required = [
+            role
+            for role in spec.required_roles
+            if role in configured and role in unavailable
+        ]
+        if spec.required_mode == "any":
+            any_available = any(
+                role in configured and role not in unavailable
+                for role in spec.required_roles
+            )
+            if not any_available:
+                missing_required.extend(unavailable_required)
+        else:
+            missing_required.extend(unavailable_required)
+    missing_required = list(dict.fromkeys(missing_required))
     degraded = bool(unavailable) or result.watt_disagrees or bool(missing_required) or result.fail_safe_active
     reason: list[str] = [f"{r}: unavailable" for r in unavailable]
     if result.watt_disagrees:
@@ -66,6 +91,7 @@ def build_slot_diagnostics(
     return {
         "source_roles": source_roles,
         "source_entities": source_entities,
+        "source_attributes": source_attributes,
         "source_states": source_states,
         "source_available": source_available,
         "missing_required": missing_required,

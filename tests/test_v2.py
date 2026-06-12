@@ -6,6 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import bcd_device_types as DT
 import bcd_logic as L
+import bcd_attributes as A
+import bcd_slot_reader as SR
 
 TZ = timezone(timedelta(hours=2))
 NOW = datetime(2026, 6, 5, 20, 0, tzinfo=TZ)
@@ -163,6 +165,73 @@ def test_numeric_fresh_value_is_state():
     assert r.state == "21.5"
     assert r.available is True
     assert r.fail_safe_active is False
+
+
+def test_environment_reads_numeric_weather_attribute_as_state():
+    raw = {
+        "atomic_class": "environment",
+        "variant": "room_climate",
+        "display_name": "DWD Home",
+        "sources": [
+            {
+                "role": "temperature_source",
+                "entity": "weather.dwd_home",
+                "attribute": "temperature",
+            }
+        ],
+    }
+    cfg = DT.parse_device_config("dwd_home", raw)
+    assert cfg is not None
+    assert cfg.source_entities() == {"temperature_source": "weather.dwd_home"}
+    assert cfg.attribute_for_role("temperature_source") == "temperature"
+    assert cfg.numeric_role() == "temperature_source"
+
+    reading = SR.slot_reading_from_values(
+        "cloudy",
+        {"temperature": 21.5, "humidity": 62},
+        attribute="temperature",
+        last_updated=NOW,
+    )
+    inp = _inp({"temperature_source": reading}, state_slot=cfg.numeric_role())
+    r = L.compute_numeric(_lc("environment", "unknown"), inp, _p(), NOW)
+
+    assert r.state == "21.5"
+    assert r.available is True
+    assert r.fail_safe_active is False
+    assert reading.numeric == 21.5
+
+
+def test_missing_weather_attribute_counts_as_missing_required():
+    raw = {
+        "atomic_class": "environment",
+        "variant": "room_climate",
+        "display_name": "DWD Home",
+        "sources": [
+            {
+                "role": "temperature_source",
+                "entity": "weather.dwd_home",
+                "attribute": "temperature",
+            }
+        ],
+    }
+    cfg = DT.parse_device_config("dwd_home", raw)
+    assert cfg is not None
+    reading = SR.slot_reading_from_values(
+        "cloudy",
+        {"humidity": 62},
+        attribute="temperature",
+        last_updated=NOW,
+    )
+    inp = _inp({"temperature_source": reading}, state_slot=cfg.numeric_role())
+    r = L.compute_numeric(_lc("environment", "unknown"), inp, _p(), NOW)
+    attrs = A.build_slot_diagnostics(cfg, inp, r)
+
+    assert r.state == "unknown"
+    assert r.available is False
+    assert r.fail_safe_active is True
+    assert attrs["source_available"]["temperature_source"] is False
+    assert attrs["source_attributes"] == {"temperature_source": "temperature"}
+    assert attrs["missing_required"] == ["temperature_source"]
 
 
 def test_numeric_fail_safe_unknown_when_stale():

@@ -93,6 +93,19 @@ def test_replace_flag_must_be_boolean():
         BI.replace_from_payload(json.dumps({"replace": "true", "devices": []}))
 
 
+def test_attribute_binding_requires_entity():
+    payload = json.dumps({
+        "devices": [{
+            "slug": "dwd_home",
+            "atomic_class": "environment",
+            "sources": [{"role": "temperature_source", "attribute": "temperature"}],
+        }]
+    })
+
+    with pytest.raises(ValueError, match="attribute braucht entity"):
+        BI.parse_bulk_payload(payload)
+
+
 def test_file_error_response_keeps_bulk_report_shape():
     response = BI.error_response(True, False, "Import file not found")
 

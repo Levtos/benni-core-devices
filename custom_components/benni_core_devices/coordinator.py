@@ -53,6 +53,7 @@ from .logic import (
     Override,
     SlotReading,
 )
+from .slot_reader import slot_reading_from_values
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -284,8 +285,8 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
 
     def _read_inputs(self, now: datetime) -> DeviceInputs:
         slots: dict[str, SlotReading] = {}
-        for role, entity_id in self.compute_entities.items():
-            slots[role] = self._read_slot(entity_id)
+        for role, binding in self._cfg.compute_bindings().items():
+            slots[role] = self._read_slot(binding.entity, binding.attribute)
         pm = self.power_model
         if pm == POWER_MODEL_NUMERIC:
             integration_slot = None
@@ -309,19 +310,16 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         self._last_inputs = inputs
         return inputs
 
-    def _read_slot(self, entity_id: str) -> SlotReading:
+    def _read_slot(self, entity_id: str | None, attribute: str | None = None) -> SlotReading:
+        if not entity_id:
+            return SlotReading(value=None)
         state = self.hass.states.get(entity_id)
         if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, ""):
             return SlotReading(value=None)
-        numeric: float | None = None
-        try:
-            numeric = float(state.state)
-        except (TypeError, ValueError):
-            numeric = None
-        return SlotReading(
-            value=state.state,
-            numeric=numeric,
+        return slot_reading_from_values(
+            state.state,
             attributes=dict(state.attributes),
+            attribute=attribute,
             last_updated=state.last_updated,
         )
 

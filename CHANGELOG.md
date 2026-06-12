@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.4.2 — FLEET-54: Attribute-Quellen für Bindings
+
+- **Binding-Contract erweitert:** `sources`/`controls`/`metadata_sources`
+  dürfen optional `attribute: <name>` tragen. Dann liest die Integration
+  `state_attr(entity, attribute)` statt des Entity-State.
+- **DWD-/Weather-Support:** Environment-Rollen können dadurch Werte wie
+  `temperature` oder `humidity` direkt aus `weather.dwd_home` verwenden;
+  numerische Rollen coercen den Attributwert wie bisher zu Zahlen.
+- **Availability/Diagnose:** Fehlende oder `None`-Attribute verhalten sich wie
+  fehlende Quellen und erscheinen in `source_available`, `missing_required` und
+  `source_attributes`.
+- Agent-Schema, Import-Validierung und Tests wurden um `attribute` erweitert.
+
 ## 0.4.1 — FLEET-54: datei-basierter MCP-Import
 
 - **Neue arg-lose Services:** `import_file_dry_run` und `import_file_apply`

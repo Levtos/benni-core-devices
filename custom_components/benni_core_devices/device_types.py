@@ -20,6 +20,7 @@ from typing import Any, Final
 from .const import (
     AVAILABILITY_ANY_REQUIRED_OR_ANY_SOURCE,
     CONF_ATOMIC_CLASS,
+    CONF_ATTRIBUTE,
     CONF_AVAILABILITY_RULE,
     CONF_CONTROLS,
     CONF_DISPLAY_NAME,
@@ -93,11 +94,11 @@ ROLE_CATALOG: Final[dict[str, RoleSpec]] = {s.key: s for s in (
     _r("cover_source", ("cover",), BUCKET_SOURCES, True, label="Rollo / Cover"),
     _r("position_source", ("sensor", "cover"), BUCKET_SOURCES, False, label="Position"),
     _r("climate_source", ("climate",), BUCKET_SOURCES, True, label="Thermostat"),
-    _r("temperature_source", ("sensor",), BUCKET_SOURCES, True, label="Temperatur"),
-    _r("humidity_source", ("sensor",), BUCKET_SOURCES, True, label="Luftfeuchte"),
-    _r("pressure_source", ("sensor",), BUCKET_SOURCES, True, label="Druck"),
+    _r("temperature_source", ("sensor", "weather"), BUCKET_SOURCES, True, label="Temperatur"),
+    _r("humidity_source", ("sensor", "weather"), BUCKET_SOURCES, True, label="Luftfeuchte"),
+    _r("pressure_source", ("sensor", "weather"), BUCKET_SOURCES, True, label="Druck"),
     _r("lux_source", ("sensor",), BUCKET_SOURCES, True, label="Helligkeit (lux)"),
-    _r("value_source", ("sensor",), BUCKET_SOURCES, True, label="Wert"),
+    _r("value_source", ("sensor", "weather"), BUCKET_SOURCES, True, label="Wert"),
     _r("battery_source", ("sensor",), BUCKET_SOURCES, False, label="Batterie"),
     _r("energy_meter", ("sensor",), BUCKET_SOURCES, False, label="Energie (kWh)"),
     _r("current_meter", ("sensor",), BUCKET_SOURCES, False, label="Strom (A)"),
@@ -352,6 +353,7 @@ class SourceBinding:
     role: str
     entity: str | None = None
     value: str | None = None      # nur Text-Controls (wake_mac)
+    attribute: str | None = None
     required: bool = False
 
 
@@ -392,6 +394,12 @@ class DeviceConfigV2:
                 return b.value
         return None
 
+    def attribute_for_role(self, role: str) -> str | None:
+        for b in self.all_bindings():
+            if b.role == role and b.attribute:
+                return b.attribute
+        return None
+
     def source_entities(self) -> dict[str, str]:
         """Rolle → Entity für alle entity-basierten Quellen (sources-Bucket)."""
         out: dict[str, str] = {}
@@ -409,6 +417,14 @@ class DeviceConfigV2:
         for b in self.all_bindings():
             if b.entity:
                 out[b.role] = b.entity
+        return out
+
+    def compute_bindings(self) -> dict[str, SourceBinding]:
+        """Alle entity-basierten Bindings (alle Buckets) — Rolle → Binding."""
+        out: dict[str, SourceBinding] = {}
+        for b in self.all_bindings():
+            if b.entity:
+                out[b.role] = b
         return out
 
     def integration_role(self) -> str | None:
@@ -474,6 +490,7 @@ def _parse_bindings(raw: Any) -> tuple[SourceBinding, ...]:
         out.append(SourceBinding(
             role=role,
             entity=(str(item[CONF_ENTITY]) if item.get(CONF_ENTITY) else None),
+            attribute=(str(item[CONF_ATTRIBUTE]) if item.get(CONF_ATTRIBUTE) else None),
             value=(str(item[CONF_VALUE]) if item.get(CONF_VALUE) else None),
             required=bool(item.get(CONF_REQUIRED, False)),
         ))
@@ -585,6 +602,22 @@ def validate_import_device(d: Any) -> str | None:
     atomic_class = d.get(CONF_ATOMIC_CLASS)
     if atomic_class not in ATOMIC_CLASSES:
         return f"{slug}: unbekannte atomic_class {atomic_class!r}"
+    for bucket in (CONF_SOURCES, CONF_CONTROLS, CONF_METADATA_SOURCES):
+        raw_bindings = d.get(bucket, [])
+        if raw_bindings is None:
+            continue
+        if not isinstance(raw_bindings, list):
+            return f"{slug}: {bucket} ist keine Liste"
+        for idx, binding in enumerate(raw_bindings):
+            if not isinstance(binding, dict):
+                return f"{slug}: {bucket}[{idx}] ist kein Mapping"
+            attribute = binding.get(CONF_ATTRIBUTE)
+            if attribute is None:
+                continue
+            if not isinstance(attribute, str) or not attribute.strip():
+                return f"{slug}: {bucket}[{idx}].attribute ist kein String"
+            if not binding.get(CONF_ENTITY):
+                return f"{slug}: {bucket}[{idx}].attribute braucht entity"
     return None
 
 

@@ -314,6 +314,25 @@ Example: current clean TV import with the existing slot model:
 This intentionally omits `power_entity` when the only candidate is an existing
 YAML/template atomic.
 
+Bindings may read an entity attribute instead of the entity state by adding
+`attribute`. This is useful for integrations such as DWD weather, where numeric
+values live on `weather.dwd_home` attributes:
+
+```yaml
+devices:
+  - slug: dwd_home_temperature
+    atomic_class: environment
+    variant: room_climate
+    display_name: DWD Home Temperature
+    sources:
+      - role: temperature_source
+        entity: weather.dwd_home
+        attribute: temperature
+```
+
+When `attribute` is set, the source value is `state_attr(entity, attribute)`.
+If the attribute is missing or `None`, the source is treated as unavailable.
+
 ## Known Gap: Rich Atomic Attributes
 
 The current implementation is not yet rich enough to fully replace the YAML

@@ -16,6 +16,7 @@ from .const import (
     COMBINED_OPERATOR_CHOICES,
     COMBINED_ROLE_CHOICES,
     CONF_ATOMIC_CLASS,
+    CONF_ATTRIBUTE,
     CONF_AVAILABILITY_RULE,
     CONF_COMBINEDS,
     CONF_CONTROLS,
@@ -259,6 +260,8 @@ def _clean_bindings(raw: Any) -> list[dict[str, Any]]:
         entry: dict[str, Any] = {"role": role}
         if b.get("entity"):
             entry["entity"] = str(b["entity"])
+        if b.get(CONF_ATTRIBUTE):
+            entry[CONF_ATTRIBUTE] = str(b[CONF_ATTRIBUTE])
         if b.get("value"):
             entry["value"] = str(b["value"])
         if b.get("required"):

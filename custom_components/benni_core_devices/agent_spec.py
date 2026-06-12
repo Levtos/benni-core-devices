@@ -109,6 +109,17 @@ devices:
         entity: sensor.kitchen_coffee_power
     diagnostics:
       fail_safe: "off"
+
+  - slug: dwd_home_temperature
+    atomic_class: environment
+    variant: room_climate
+    display_name: "DWD Home Temperature"
+    sources:
+      - role: temperature_source
+        entity: weather.dwd_home
+        attribute: temperature             # reads state_attr(entity, attribute)
+    diagnostics:
+      fail_safe: unknown
 ```"""
 
 _COMBINED_EXAMPLE = """```yaml
@@ -159,6 +170,9 @@ dry-run before applying.
 - `wake_mac` is a **text control** (`value:`), not an entity.
 - For openings with two physical contacts, `battery_source` is a single optional
   entity — pick the primary contact's battery or omit.
+- A binding may set `attribute:` next to `entity:`; then the source value is
+  `state_attr(entity, attribute)` instead of the entity state. Use this for
+  weather entities such as `weather.dwd_home` (`temperature`, `humidity`, ...).
 
 ## Workflow
 > Import/export is available **both** as WebSocket commands and as **HA services**
@@ -238,6 +252,7 @@ def build_json_schema() -> dict[str, Any]:
         "properties": {
             "role": {"enum": list(ALL_ROLE_KEYS)},
             "entity": {"type": "string"},
+            "attribute": {"type": "string"},
             "value": {"type": "string"},
             "required": {"type": "boolean"},
         },

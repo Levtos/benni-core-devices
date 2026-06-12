@@ -140,6 +140,7 @@ CONF_CODE_LEGEND: Final[str] = "code_legend"
 CONF_DERIVED: Final[str] = "derived"
 CONF_ROLE: Final[str] = "role"
 CONF_ENTITY: Final[str] = "entity"
+CONF_ATTRIBUTE: Final[str] = "attribute"
 
 # Combined Output-Typen.
 OUTPUT_TYPE_ENUM: Final[str] = "enum"

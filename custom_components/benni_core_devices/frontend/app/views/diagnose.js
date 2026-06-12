@@ -7,6 +7,12 @@ const FILTERS = [
   ["ok", "OK"],
 ];
 
+const TYPE_FILTERS = [
+  ["all", "Alle"],
+  ["device", "Atomics"],
+  ["combined", "Combineds"],
+];
+
 function rows(status) {
   const out = [];
   for (const d of status.devices || []) {
@@ -143,14 +149,18 @@ export function render(root, ctx) {
   const all = rows(status).sort((a, b) =>
     (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.name.localeCompare(b.name));
   const filter = root._filter || "all";
+  const typeFilter = root._typeFilter || "all";
   const missing = devices.reduce((n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
   const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
   const ready = all.filter((r) => r.severity === "ok").length;
   const errors = all.filter((r) => r.severity === "err").length;
   const attention = all.filter((r) => r.severity !== "ok").length;
 
-  const visible = all.filter((r) => filter === "all" || r.severity === filter);
+  const visible = all.filter((r) =>
+    (filter === "all" || r.severity === filter) &&
+    (typeFilter === "all" || r.kind === typeFilter));
   if (root._sel && !all.find((r) => r.key === root._sel)) root._sel = null;
+  if (root._sel && !visible.find((r) => r.key === root._sel)) root._sel = null;
   if (!root._sel && visible.length) root._sel = visible[0].key;
   const selected = all.find((r) => r.key === root._sel);
 
@@ -172,9 +182,15 @@ export function render(root, ctx) {
       <div class="card">
         <div class="section-head">
           <h2>Was braucht Aufmerksamkeit?</h2>
-          <div class="filters">
-            ${FILTERS.map(([id, label]) =>
-              `<button data-filter="${id}" class="${filter === id ? "active" : ""}">${esc(label)}</button>`).join("")}
+          <div class="filterbar">
+            <div class="filters" aria-label="Eintragstyp">
+              ${TYPE_FILTERS.map(([id, label]) =>
+                `<button data-type-filter="${id}" class="${typeFilter === id ? "active" : ""}">${esc(label)}</button>`).join("")}
+            </div>
+            <div class="filters" aria-label="Status">
+              ${FILTERS.map(([id, label]) =>
+                `<button data-filter="${id}" class="${filter === id ? "active" : ""}">${esc(label)}</button>`).join("")}
+            </div>
           </div>
         </div>
         ${visible.length ? `<table>
@@ -195,6 +211,8 @@ export function render(root, ctx) {
 
   root.querySelectorAll("[data-filter]").forEach((b) =>
     b.addEventListener("click", () => { root._filter = b.dataset.filter; ctx.rerender(); }));
+  root.querySelectorAll("[data-type-filter]").forEach((b) =>
+    b.addEventListener("click", () => { root._typeFilter = b.dataset.typeFilter; ctx.rerender(); }));
   root.querySelectorAll("[data-row]").forEach((tr) =>
     tr.addEventListener("click", () => { root._sel = tr.dataset.row; ctx.rerender(); }));
 }

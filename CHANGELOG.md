@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.4.3 — Diagnose-UX: Atomic/Combined-Filter
+
+- **Diagnose-Ansicht:** Die Problemliste kann jetzt zusätzlich nach
+  `Alle`/`Atomics`/`Combineds` gefiltert werden. Severity-Filter
+  (`Alle`/`Fehler`/`Warnungen`/`OK`) bleiben separat erhalten.
+- **Detail-Auswahl:** Beim Filterwechsel wird die rechte Detailkarte auf den
+  sichtbaren Eintrag zurückgesetzt, damit keine weggefilterten Details stehen
+  bleiben.
+
 ## 0.4.2 — FLEET-54: Attribute-Quellen für Bindings
 
 - **Binding-Contract erweitert:** `sources`/`controls`/`metadata_sources`

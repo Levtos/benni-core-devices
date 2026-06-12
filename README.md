@@ -41,6 +41,11 @@ The initial config flow only selects the route/profile:
 Device and light-group CRUD is done in the custom panel. The options flow remains
 as an emergency fallback.
 
+The panel's Diagnose view combines Atomics and Combineds in one operational
+overview. Use the type filter (`Alle`, `Atomics`, `Combineds`) together with the
+severity filter (`Alle`, `Fehler`, `Warnungen`, `OK`) to narrow the table before
+inspecting the detail card.
+
 Options structure:
 
 ```yaml

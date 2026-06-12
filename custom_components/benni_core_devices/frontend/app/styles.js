@@ -102,6 +102,7 @@ export const CSS = `
 .v { font-weight: 600; font-size: 13px; overflow-wrap: anywhere; text-align: right; }
 
 /* Filter pills */
+.filterbar { display: flex; gap: 8px; align-items: center; justify-content: flex-end; flex-wrap: wrap; }
 .filters { display: flex; gap: 6px; flex-wrap: wrap; }
 .filters button { border: 1px solid var(--line); background: var(--surface2); color: var(--muted); border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 12px; }
 .filters button.active { color: var(--purple); border-color: var(--purple); background: var(--purple-soft); }

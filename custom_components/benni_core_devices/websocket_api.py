@@ -54,20 +54,26 @@ from .const import (
     WS_SET_DEVICE,
     WS_SET_GROUP,
     combined_object_id_prefix,
-    device_object_id_prefix,
     entry_profile,
-    group_object_id_prefix,
 )
 from .coordinator import all_coordinators, combined_coordinators_for_entry
+from .bulk_import import (
+    apply_bulk,
+    combined_report,
+    combineds_from_options,
+    devices_from_options,
+    device_sensor_entity_id,
+    export_yaml_from_options,
+    groups_from_options,
+    import_report,
+    parse_bulk_payload,
+    source_warnings,
+)
 from .device_types import (
     ATOMIC_CLASSES,
     ROLE_CATALOG,
-    classify_source_entity,
-    parse_device_config,
     slugify,
-    source_warning_text,
     unique_slug,
-    validate_import_payload,
 )
 
 
@@ -77,18 +83,15 @@ def _entry(hass: HomeAssistant) -> ConfigEntry | None:
 
 
 def _devices(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
-    raw = entry.options.get(CONF_DEVICES)
-    return dict(raw) if isinstance(raw, dict) else {}
+    return devices_from_options(entry.options)
 
 
 def _groups(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
-    raw = entry.options.get(CONF_LIGHT_GROUPS)
-    return dict(raw) if isinstance(raw, dict) else {}
+    return groups_from_options(entry.options)
 
 
 def _combineds(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
-    raw = entry.options.get(CONF_COMBINEDS)
-    return dict(raw) if isinstance(raw, dict) else {}
+    return combineds_from_options(entry.options)
 
 
 async def _update_options(hass: HomeAssistant, entry: ConfigEntry, options: dict[str, Any]) -> None:
@@ -106,35 +109,12 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _own_prefixes(profile: str) -> tuple[str, ...]:
-    return (
-        device_object_id_prefix(profile),
-        group_object_id_prefix(profile),
-        combined_object_id_prefix(profile),
-    )
-
-
-def _conf_source_entities(conf: dict[str, Any]) -> list[str]:
-    out: list[str] = []
-    for bucket in (CONF_SOURCES, CONF_CONTROLS, CONF_METADATA_SOURCES):
-        for b in conf.get(bucket, []) or []:
-            if isinstance(b, dict) and b.get("entity"):
-                out.append(str(b["entity"]))
-    return out
-
-
 def _source_warnings(conf: dict[str, Any], profile: str) -> list[str]:
-    own = _own_prefixes(profile)
-    out: list[str] = []
-    for eid in _conf_source_entities(conf):
-        category = classify_source_entity(eid, own_prefixes=own)
-        if category:
-            out.append(source_warning_text(category, eid))
-    return out
+    return source_warnings(conf, profile)
 
 
 def _device_sensor_entity_id(profile: str, slug: str) -> str:
-    return f"sensor.{device_object_id_prefix(profile)}{slug}"
+    return device_sensor_entity_id(profile, slug)
 
 
 def _consumed_by_index(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, list[str]]:
@@ -322,123 +302,6 @@ def _device_conf_from_msg(msg: dict[str, Any], existing: set[str]) -> tuple[str,
 # ── BULK-IMPORT + DRY-RUN ────────────────────────────────────────────────────
 
 
-def _normalize_combineds(raw: Any) -> dict[str, dict[str, Any]]:
-    """Akzeptiert combineds als Dict {slug: conf} (Export-Format) oder Liste."""
-    out: dict[str, dict[str, Any]] = {}
-    if isinstance(raw, dict):
-        for slug, conf in raw.items():
-            if isinstance(conf, dict):
-                out[str(slug)] = dict(conf)
-    elif isinstance(raw, list):
-        for item in raw:
-            if not isinstance(item, dict):
-                continue
-            slug = str(item.get(CONF_SLUG) or slugify(str(item.get(CONF_DISPLAY_NAME, "")))).strip()
-            if not slug:
-                continue
-            if isinstance(item.get("config"), dict):
-                conf = dict(item["config"])
-                if item.get(CONF_DISPLAY_NAME):
-                    conf[CONF_DISPLAY_NAME] = item[CONF_DISPLAY_NAME]
-            else:
-                conf = {k: v for k, v in item.items() if k != CONF_SLUG}
-            out[slug] = conf
-    return out
-
-
-def _parse_bulk(
-    raw: str,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
-    parsed = yaml.safe_load(raw) if raw and raw.strip() else None
-    if isinstance(parsed, dict):
-        devices = parsed.get(CONF_DEVICES, [])
-        groups = parsed.get(CONF_LIGHT_GROUPS, {})
-        combineds_raw = parsed.get(CONF_COMBINEDS, {})
-    else:
-        devices = parsed
-        groups = {}
-        combineds_raw = {}
-    valid: list[dict[str, Any]] = []
-    if devices:  # Geräte sind optional, wenn nur Combineds importiert werden.
-        if isinstance(devices, list):
-            for item in devices:
-                if isinstance(item, dict) and not item.get(CONF_SLUG):
-                    derived = slugify(str(item.get(CONF_DISPLAY_NAME, "")))
-                    if derived:
-                        item[CONF_SLUG] = derived
-        valid, errors = validate_import_payload(devices)
-        if errors:
-            raise ValueError("\n".join(errors))
-    combineds = _normalize_combineds(combineds_raw)
-    return valid, (groups if isinstance(groups, dict) else {}), combineds
-
-
-def _import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, Any]]:
-    own = _own_prefixes(profile)
-    report: list[dict[str, Any]] = []
-    for d in valid:
-        slug = str(d.get(CONF_SLUG))
-        cfg = parse_device_config(slug, d)
-        missing = cfg.missing_required() if cfg else ["<invalid>"]
-        derived_sources = []
-        for eid in _conf_source_entities(d):
-            cat = classify_source_entity(eid, own_prefixes=own)
-            if cat:
-                derived_sources.append(source_warning_text(cat, eid))
-        report.append({
-            "slug": slug,
-            "atomic_class": d.get(CONF_ATOMIC_CLASS),
-            "variant": d.get(CONF_VARIANT),
-            "entity_id": _device_sensor_entity_id(profile, slug),
-            "missing_required": missing,
-            "derived_sources": derived_sources,
-            "accepted": not derived_sources,
-        })
-    return report
-
-
-def _combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list[dict[str, Any]]:
-    from .combined import parse_combined, validate_combined_v1
-
-    own = _own_prefixes(profile)
-    rep: list[dict[str, Any]] = []
-    for slug, conf in combineds.items():
-        cfg = parse_combined(slug, conf)
-        n = len(cfg.sources) if cfg else 0
-        derived_sources = []
-        # Hinweis: Combineds DÜRFEN Atomics/Combineds lesen — hier kein Block,
-        # nur informativ (eigene Outputs als Quelle wären Rückkopplung).
-        validation = validate_combined_v1(cfg) if cfg else ["ungültige Config"]
-        rep.append({
-            "slug": slug,
-            "output_type": cfg.output_type if cfg else "?",
-            "sources": n,
-            "derived_values": len(cfg.derived_values) if cfg else 0,
-            "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
-            "derived_sources": derived_sources,
-            "validation": validation,
-            "accepted": cfg is not None and not validation,
-        })
-    return rep
-
-
-def _apply_bulk(
-    entry: ConfigEntry,
-    valid: list[dict[str, Any]],
-    imported_groups: dict[str, Any],
-    imported_combineds: dict[str, Any],
-    replace: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
-    # replace=True → Clean-Slate: bestehende Einträge werden NICHT gemerged.
-    devices = {} if replace else _devices(entry)
-    for item in valid:
-        slug = str(item.pop(CONF_SLUG))
-        devices[slug] = item
-    groups = dict(imported_groups) if replace else {**_groups(entry), **imported_groups}
-    combineds = dict(imported_combineds) if replace else {**_combineds(entry), **imported_combineds}
-    return devices, groups, combineds
-
-
 async def run_bulk_import(
     hass: HomeAssistant,
     entry: ConfigEntry,
@@ -450,13 +313,13 @@ async def run_bulk_import(
 
     Raises ValueError/yaml.YAMLError bei ungültigem Payload.
     """
-    valid, imported_groups, imported_combineds = _parse_bulk(payload)
+    valid, imported_groups, imported_combineds = parse_bulk_payload(payload)
     profile = entry_profile(entry)
-    report = _import_report(valid, profile)
-    combined_report = _combined_report(imported_combineds, profile)
+    report = import_report(valid, profile)
+    c_report = combined_report(imported_combineds, profile)
     base = {
         "report": report,
-        "combined_report": combined_report,
+        "combined_report": c_report,
         "combineds_in": len(imported_combineds),
     }
     if dry_run:
@@ -465,8 +328,8 @@ async def run_bulk_import(
             "devices": len(valid), "groups": len(imported_groups),
             "combineds": len(imported_combineds), **base,
         }
-    devices, groups, combineds = _apply_bulk(
-        entry, valid, imported_groups, imported_combineds, replace
+    devices, groups, combineds = apply_bulk(
+        entry.options, valid, imported_groups, imported_combineds, replace
     )
     await _update_options(hass, entry, {
         **entry.options,
@@ -482,12 +345,7 @@ async def run_bulk_import(
 
 
 def _export_yaml(entry: ConfigEntry) -> str:
-    payload = {
-        CONF_DEVICES: [{CONF_SLUG: slug, **conf} for slug, conf in _devices(entry).items()],
-        CONF_COMBINEDS: _combineds(entry),
-        CONF_LIGHT_GROUPS: _groups(entry),
-    }
-    return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
+    return export_yaml_from_options(entry.options)
 
 
 # ── REGISTRATION ─────────────────────────────────────────────────────────────

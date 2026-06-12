@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
 import sys
 import types
@@ -14,6 +15,28 @@ pkg_name = "bcd_pure_pkg"
 pkg = types.ModuleType(pkg_name)
 pkg.__path__ = [PKG_DIR]
 sys.modules[pkg_name] = pkg
+
+try:
+    import yaml  # noqa: F401
+except ModuleNotFoundError:
+    yaml_shim = types.ModuleType("yaml")
+
+    class YAMLError(ValueError):
+        pass
+
+    def safe_load(raw):
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as err:
+            raise YAMLError(str(err)) from err
+
+    def safe_dump(data, sort_keys=False, allow_unicode=True):
+        return json.dumps(data, sort_keys=sort_keys, ensure_ascii=not allow_unicode, indent=2)
+
+    yaml_shim.YAMLError = YAMLError
+    yaml_shim.safe_load = safe_load
+    yaml_shim.safe_dump = safe_dump
+    sys.modules["yaml"] = yaml_shim
 
 
 def _load(modname: str, filename: str):
@@ -33,6 +56,7 @@ logic = _load("logic", "logic.py")
 attributes = _load("attributes", "attributes.py")
 combined_expr = _load("combined_expr", "combined_expr.py")
 combined = _load("combined", "combined.py")
+bulk_import = _load("bulk_import", "bulk_import.py")
 agent_spec = _load("agent_spec", "agent_spec.py")
 
 sys.modules["bcd_const"] = const
@@ -41,4 +65,5 @@ sys.modules["bcd_logic"] = logic
 sys.modules["bcd_attributes"] = attributes
 sys.modules["bcd_combined_expr"] = combined_expr
 sys.modules["bcd_combined"] = combined
+sys.modules["bcd_bulk_import"] = bulk_import
 sys.modules["bcd_agent_spec"] = agent_spec

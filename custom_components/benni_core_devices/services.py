@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import functools
 import logging
+from pathlib import Path
 
 import voluptuous as vol
+import yaml
 from homeassistant.core import HomeAssistant, ServiceCall, SupportsResponse
 from homeassistant.exceptions import HomeAssistantError
 
@@ -22,6 +24,8 @@ from .const import (
     SERVICE_BULK_IMPORT,
     SERVICE_CLEAR_OVERRIDE,
     SERVICE_EXPORT_CONFIG,
+    SERVICE_IMPORT_FILE_APPLY,
+    SERVICE_IMPORT_FILE_DRY_RUN,
     SERVICE_SET_OVERRIDE,
 )
 from .coordinator import coordinator_by_slug
@@ -49,6 +53,8 @@ _BULK_IMPORT_SCHEMA = vol.Schema(
     }
 )
 
+_IMPORT_FILE_SCHEMA = vol.Schema({})
+
 
 async def _bulk_import(hass: HomeAssistant, call: ServiceCall) -> dict:
     """MCP-/Agenten-fähiger Import. Default dry_run=True (sicher)."""
@@ -75,6 +81,53 @@ async def _export_config(hass: HomeAssistant, call: ServiceCall) -> dict:
     if entry is None:
         raise HomeAssistantError("Benni Core Devices not loaded")
     return {"yaml": _export_yaml(entry)}
+
+
+async def _import_file(hass: HomeAssistant, dry_run: bool) -> dict:
+    from .bulk_import import (
+        IMPORT_FILE_DISPLAY_PATH,
+        IMPORT_FILE_PARTS,
+        error_response,
+        replace_from_payload,
+    )
+    from .websocket_api import _entry, run_bulk_import
+
+    entry = _entry(hass)
+    if entry is None:
+        raise HomeAssistantError("Benni Core Devices not loaded")
+
+    path = Path(hass.config.path(*IMPORT_FILE_PARTS))
+    try:
+        payload = await hass.async_add_executor_job(
+            functools.partial(path.read_text, encoding="utf-8")
+        )
+    except FileNotFoundError:
+        return error_response(
+            dry_run,
+            False,
+            f"Import file not found: {IMPORT_FILE_DISPLAY_PATH}",
+        )
+    except OSError as err:
+        return error_response(
+            dry_run,
+            False,
+            f"Could not read import file {IMPORT_FILE_DISPLAY_PATH}: {err}",
+        )
+
+    replace = False
+    try:
+        replace = replace_from_payload(payload)
+        return await run_bulk_import(hass, entry, payload, dry_run, replace)
+    except (TypeError, ValueError, yaml.YAMLError) as err:
+        return error_response(dry_run, replace, str(err))
+
+
+async def _import_file_dry_run(hass: HomeAssistant, call: ServiceCall) -> dict:
+    return await _import_file(hass, True)
+
+
+async def _import_file_apply(hass: HomeAssistant, call: ServiceCall) -> dict:
+    return await _import_file(hass, False)
 
 
 async def _set_override(hass: HomeAssistant, call: ServiceCall) -> None:
@@ -123,12 +176,26 @@ def async_register_services(hass: HomeAssistant) -> None:
             functools.partial(_export_config, hass),
             supports_response=SupportsResponse.ONLY,
         )
+    if not hass.services.has_service(DOMAIN, SERVICE_IMPORT_FILE_DRY_RUN):
+        hass.services.async_register(
+            DOMAIN, SERVICE_IMPORT_FILE_DRY_RUN,
+            functools.partial(_import_file_dry_run, hass),
+            schema=_IMPORT_FILE_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
+        )
+    if not hass.services.has_service(DOMAIN, SERVICE_IMPORT_FILE_APPLY):
+        hass.services.async_register(
+            DOMAIN, SERVICE_IMPORT_FILE_APPLY,
+            functools.partial(_import_file_apply, hass),
+            schema=_IMPORT_FILE_SCHEMA,
+            supports_response=SupportsResponse.ONLY,
+        )
 
 
 def async_unregister_services(hass: HomeAssistant) -> None:
     for service in (
-        SERVICE_SET_OVERRIDE, SERVICE_CLEAR_OVERRIDE,
-        SERVICE_BULK_IMPORT, SERVICE_EXPORT_CONFIG,
+        SERVICE_SET_OVERRIDE, SERVICE_CLEAR_OVERRIDE, SERVICE_BULK_IMPORT,
+        SERVICE_EXPORT_CONFIG, SERVICE_IMPORT_FILE_DRY_RUN, SERVICE_IMPORT_FILE_APPLY,
     ):
         if hass.services.has_service(DOMAIN, service):
             hass.services.async_remove(DOMAIN, service)

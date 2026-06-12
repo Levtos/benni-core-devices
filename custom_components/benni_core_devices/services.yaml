@@ -65,3 +65,16 @@ export_config:
   name: Export config (agent/MCP)
   description: Return the current devices/combineds/light_groups config as YAML.
 
+import_file_dry_run:
+  name: Import file dry run (agent/MCP)
+  description: >
+    Read <config>/benni_core_devices/import.yaml, validate it with the same
+    logic as bulk_import, and return the import report without writing changes.
+
+import_file_apply:
+  name: Import file apply (agent/MCP)
+  description: >
+    Read <config>/benni_core_devices/import.yaml and apply it with the same
+    logic as bulk_import. Set top-level replace: true in the file for a clean
+    slate; otherwise entries are merged.
+

@@ -229,6 +229,8 @@ SERVICE_CLEAR_OVERRIDE: Final[str] = "clear_override"
 # Agenten-/MCP-fähige Import-/Export-Services (spiegeln die WS-Commands).
 SERVICE_BULK_IMPORT: Final[str] = "bulk_import"
 SERVICE_EXPORT_CONFIG: Final[str] = "export_config"
+SERVICE_IMPORT_FILE_DRY_RUN: Final[str] = "import_file_dry_run"
+SERVICE_IMPORT_FILE_APPLY: Final[str] = "import_file_apply"
 ATTR_PAYLOAD: Final[str] = "payload"
 ATTR_DRY_RUN: Final[str] = "dry_run"
 ATTR_REPLACE: Final[str] = "replace"

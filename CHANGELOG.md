@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.1 — FLEET-54: datei-basierter MCP-Import
+
+- **Neue arg-lose Services:** `import_file_dry_run` und `import_file_apply`
+  lesen `<config>/benni_core_devices/import.yaml` und liefern den bekannten
+  `bulk_import`-Report mit `return_response: true` zurück.
+- **MCP-sicherer Workflow:** Datei im `export_config`-Format bearbeiten
+  (`devices:`, `combineds:`, `light_groups:`), optional `replace: true` für
+  Clean Slate setzen, dry-run prüfen, dann explizit apply aufrufen.
+- **Geteilte Logik:** Datei-Import, alter `bulk_import`-Service und WS-Import
+  nutzen dieselbe HA-freie Parse-/Report-/Apply-Schicht. Fehlende Import-Datei
+  erzeugt eine klare Response statt eines Service-Crashes.
+
 ## 0.4.0 — Combined v1.0 (Expression / Gate / Health / Latch)
 
 Additiv auf die v0-First-Match-Engine — v0 bleibt unverändert. HA-frei + getestet.

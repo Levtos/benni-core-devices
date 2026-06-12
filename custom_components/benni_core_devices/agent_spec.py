@@ -163,19 +163,25 @@ dry-run before applying.
 ## Workflow
 > Import/export is available **both** as WebSocket commands and as **HA services**
 > (callable via MCP `ha_call_service`, with `return_response: true`):
-> `benni_core_devices.bulk_import` `{{payload, dry_run, replace}}` → returns the
-> report; `benni_core_devices.export_config` → returns `{{yaml}}`. When driving
-> via MCP, prefer the services. `dry_run` defaults to true; `replace: true` does
-> a clean slate (clears existing devices/combineds/groups).
+> `benni_core_devices.export_config` → returns `{{yaml}}`.
+> For MCP bridges that cannot pass service `data`, write the edited export YAML
+> to `<config>/benni_core_devices/import.yaml`, then call the arg-less services
+> `benni_core_devices.import_file_dry_run` and
+> `benni_core_devices.import_file_apply` with `return_response: true`.
+> The legacy `benni_core_devices.bulk_import` service still accepts
+> `{{payload, dry_run, replace}}` and returns the same report. Add top-level
+> `replace: true` to the import file for a clean slate.
 
 1. **Read current config** (avoid duplicates): service `export_config` (MCP) or
    WS `benni_core_devices/export_config`.
 2. **Discover** raw entities via the HA MCP tools (search/list/states).
 3. **Draft** the devices YAML (schema below) and any combined configs.
-4. **Validate devices**: WS `benni_core_devices/bulk_import` with `dry_run: true`.
+4. **Validate devices**: service `import_file_dry_run` (MCP) or WS
+   `benni_core_devices/bulk_import` with `dry_run: true`.
    Resolve every `missing_required` and `derived_sources` entry; note the resulting
    `entity_id`s.
-5. **Apply devices**: same command with `dry_run: false`.
+5. **Apply devices**: service `import_file_apply` (MCP) or the same WS command
+   with `dry_run: false`.
 6. **Combineds**: either include a `combineds:` block in the bulk_import YAML
    (dict slug → config; validated by the same dry-run), or create each via WS
    `benni_core_devices/set_combined` `{{slug?, display_name, config}}`.

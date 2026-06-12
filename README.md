@@ -243,6 +243,30 @@ benni_core_devices.clear_override:
 
 Overrides are persisted per device and survive restarts until cleared or expired.
 
+Import/export services:
+
+- `benni_core_devices.export_config` returns the current config as YAML.
+- `benni_core_devices.bulk_import` accepts a YAML payload plus `dry_run` and
+  `replace` for UI/WebSocket-capable clients.
+- `benni_core_devices.import_file_dry_run` is arg-less for MCP bridges that
+  cannot pass service `data`; it reads
+  `<config>/benni_core_devices/import.yaml`, validates it, and returns the
+  normal bulk-import report without writing.
+- `benni_core_devices.import_file_apply` reads the same file and persists the
+  import. Apply is never implicit.
+
+The import file uses the exact `export_config` shape:
+
+```yaml
+devices: []
+combineds: {}
+light_groups: {}
+```
+
+Add top-level `replace: true` to the file for a clean-slate import. Without it,
+the imported entries are merged into the existing devices, combineds and light
+groups.
+
 ## Import Rules
 
 Bulk import should reference raw Home Assistant entities only.
@@ -294,6 +318,10 @@ YAML/template atomic.
 
 The current implementation is not yet rich enough to fully replace the YAML
 atomics.
+
+The current Einhornzentrale opening/window logic is summarized as the concrete
+reference for this rework in
+[docs/opening-combined-rework.md](docs/opening-combined-rework.md).
 
 Missing for a good TV atomic:
 
@@ -416,4 +444,3 @@ Current local test suite:
 
 The suite currently covers the HA-free decision logic and device-type sanity.
 It does not yet cover the planned rich attribute layer.
-

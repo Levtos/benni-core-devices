@@ -1,11 +1,8 @@
 import { chip, esc, qualityKind } from "../styles.js";
 
-const FILTERS = [
-  ["all", "Alle"],
-  ["err", "Fehler"],
-  ["warn", "Warnungen"],
-  ["ok", "OK"],
-];
+// QoL-Patch: Suche, gruppierte Filter (Typ/Status/Kategorie), Sticky-Leiste +
+// Sticky-Detailpanel, Sortier-Dropdown und optionale Kategorie-Gruppierung.
+// Optik/Struktur sowie die bestehende Auswahl-/Detail-Logik bleiben erhalten.
 
 const TYPE_FILTERS = [
   ["all", "Alle"],
@@ -13,12 +10,66 @@ const TYPE_FILTERS = [
   ["combined", "Combineds"],
 ];
 
+const STATUS_FILTERS = [
+  ["all", "Alle"],
+  ["err", "Fehler"],
+  ["missing", "Missing"],
+  ["degraded", "Degraded"],
+  ["warn", "Warnungen"],
+  ["ok", "OK"],
+  ["available", "Available"],
+];
+
+const CATEGORY_FILTERS = [
+  ["all", "Alle"],
+  ["bad", "Bad"],
+  ["klima", "Klima"],
+  ["fenster", "Fenster/Türen"],
+  ["praesenz", "Präsenz"],
+  ["medien", "Medien"],
+  ["strom", "Strom/Plug"],
+  ["wetter", "Wetter/DWD"],
+  ["licht", "Licht"],
+  ["system", "System"],
+  ["sonstige", "Sonstige"],
+];
+
+const CAT_LABEL = Object.fromEntries(CATEGORY_FILTERS.map(([k, l]) => [k, l]));
+
+const SORT_OPTIONS = [
+  ["attention", "Aufmerksamkeit zuerst"],
+  ["name", "Name A–Z"],
+  ["category", "Kategorie"],
+  ["type", "Typ"],
+  ["status", "Status"],
+];
+
+const SEV_RANK = { err: 0, warn: 1, ok: 2 };
+
+// Kategorie heuristisch aus Name + Typ ableiten (Raum „Bad" schlägt Funktion,
+// danach funktionale Kategorien). Keine sichere Erkennung → "sonstige".
+function categorize(name, type) {
+  const s = `${name} ${type}`.toLowerCase();
+  const has = (re) => re.test(s);
+  if (has(/\bbad\b|\bbath|dusche|\bwc\b|toilet/)) return "bad";
+  if (has(/dwd|warnstufe|wetter|weather|forecast|regen|niederschlag|unwetter/)) return "wetter";
+  if (has(/klima|thermostat|temperat|heiz|hvac|humid|feucht|dew|taupunkt|co2|climate|environment/)) return "klima";
+  if (has(/licht|light|lampe|\blamp|strip|\bled\b|leuchte|dimmer/)) return "licht";
+  if (has(/fenster|t(ü|ue)r|window|door|kontakt|contact|opening|rollo|cover|blind|rolll?aden/)) return "fenster";
+  if (has(/media|medien|\btv\b|apple ?tv|sonos|player|audio|sound|\bavr\b|ps5|console|konsole|spiel|cast|musik/)) return "medien";
+  if (has(/strom|plug|steckdose|power|\bwatt|socket|energie|energy|verbrauch|appliance|wasch|trockner|sp(ü|ue)l|kaffee|coffee/)) return "strom";
+  if (has(/pr(ä|ae)senz|presence|anwesen|motion|bewegung|occupanc|person|\bhome\b|\baway\b|abwesen/)) return "praesenz";
+  if (has(/system|update|\bsun\b|\bcore\b|version|diagnos|status/)) return "system";
+  return "sonstige";
+}
+
 function rows(status) {
   const out = [];
   for (const d of status.devices || []) {
     const a = d.attrs || {};
     const quality = a.atomic_quality || (a.available ? "ok" : "unavailable");
-    out.push({
+    const cat = categorize(a.display_name || d.slug, (d.config && d.config.atomic_class) || "device");
+    const row = {
       kind: "device", key: `device:${d.slug}`, slug: d.slug,
       name: a.display_name || d.slug,
       type: (d.config && d.config.atomic_class) || "device",
@@ -27,13 +78,21 @@ function rows(status) {
       missing: (a.missing_required || []).length,
       reason: (a.degraded_reason || []).join(", ") || "—",
       severity: qualityKind(quality),
+      degraded: (a.degraded_reason || []).length > 0 || quality === "degraded" || a.degraded === true,
+      availGood: !!a.available,
+      cat, catLabel: CAT_LABEL[cat],
+      sources: a.source_entities || {},
+      entityId: d.entity_id,
       data: d,
-    });
+    };
+    row.haystack = buildHaystack(row);
+    out.push(row);
   }
   for (const c of status.combineds || []) {
     const a = c.attrs || {};
     const severity = a.degraded ? "warn" : (c.state == null ? "err" : "ok");
-    out.push({
+    const cat = categorize(c.display_name || c.slug, `combined ${c.output_type || ""}`);
+    const row = {
       kind: "combined", key: `combined:${c.slug}`, slug: c.slug,
       name: c.display_name || c.slug,
       type: `combined/${c.output_type || "enum"}`,
@@ -42,15 +101,56 @@ function rows(status) {
       missing: (a.missing_sources || []).length,
       reason: a.reason || "—",
       severity,
+      degraded: !!a.degraded,
+      availGood: !a.degraded && c.state != null,
+      cat, catLabel: CAT_LABEL[cat],
+      sources: a.source_entities || {},
+      entityId: c.entity_id,
       data: c,
-    });
+    };
+    row.haystack = buildHaystack(row);
+    out.push(row);
   }
   return out;
 }
 
-const SEV_RANK = { err: 0, warn: 1, ok: 2 };
+// Suchbarer Index: Name, Entity-ID, Typ, Kategorie, State, Reason, Quell-Entities.
+function buildHaystack(r) {
+  const src = Object.values(r.sources || {}).join(" ");
+  return [r.name, r.entityId, r.type, r.catLabel, r.state, r.reason, src]
+    .map((x) => String(x ?? "")).join(" ").toLowerCase();
+}
 
-function emptyState(ctx) {
+function matchesStatus(r, f) {
+  switch (f) {
+    case "all": return true;
+    case "err": return r.severity === "err";
+    case "missing": return r.missing > 0;
+    case "degraded": return r.degraded;
+    case "warn": return r.severity === "warn";
+    case "ok": return r.severity === "ok";
+    case "available": return r.availGood;
+    default: return true;
+  }
+}
+
+function attentionRank(r) {
+  if (r.severity === "err") return 0;
+  if (r.missing > 0) return 1;
+  if (r.degraded) return 2;
+  if (r.severity === "warn") return 3;
+  return 4;
+}
+
+const SORTERS = {
+  attention: (a, b) => (attentionRank(a) - attentionRank(b)) || a.name.localeCompare(b.name),
+  name: (a, b) => a.name.localeCompare(b.name),
+  category: (a, b) => a.catLabel.localeCompare(b.catLabel) || a.name.localeCompare(b.name),
+  type: (a, b) => a.type.localeCompare(b.type) || a.name.localeCompare(b.name),
+  status: (a, b) => (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.name.localeCompare(b.name),
+};
+
+function emptyState() {
   return `
     <div class="hero">
       <div class="hicon"><ha-icon icon="mdi:atom-variant"></ha-icon></div>
@@ -123,6 +223,40 @@ function detailCard(row) {
     </div>`;
 }
 
+const ROW_TPL = (r, selKey) => `
+  <tr class="clickable ${r.key === selKey ? "selected-row" : ""}" data-row="${esc(r.key)}">
+    <td>${esc(r.name)}</td>
+    <td class="muted">${esc(r.type)}</td>
+    <td>${esc(r.state)}</td>
+    <td class="s-${r.severity}">${esc(r.available)}</td>
+    <td>${r.missing ? chip("warn", r.missing) : "0"}</td>
+    <td class="muted">${esc(r.reason)}</td>
+  </tr>`;
+
+function tableHtml(visible, grouped, collapsed, selKey) {
+  const head = `<thead><tr><th>Name</th><th>Typ</th><th>State</th><th>Avail</th><th>Missing</th><th>Reason</th></tr></thead>`;
+  if (!grouped) {
+    return `<table>${head}<tbody>${visible.map((r) => ROW_TPL(r, selKey)).join("")}</tbody></table>`;
+  }
+  // Gruppiert: pro Kategorie ein <tbody> mit klickbarer, einklappbarer Kopfzeile.
+  const order = CATEGORY_FILTERS.map(([k]) => k).filter((k) => k !== "all");
+  const byCat = new Map();
+  for (const r of visible) {
+    if (!byCat.has(r.cat)) byCat.set(r.cat, []);
+    byCat.get(r.cat).push(r);
+  }
+  const groups = order.filter((k) => byCat.has(k)).map((k) => {
+    const list = byCat.get(k);
+    const isOpen = !collapsed.has(k);
+    const body = isOpen ? list.map((r) => ROW_TPL(r, selKey)).join("") : "";
+    return `<tbody>
+      <tr class="group-row ${isOpen ? "open" : ""}" data-cat="${esc(k)}">
+        <td colspan="6">${esc(CAT_LABEL[k])}<span class="cnt">(${list.length})</span></td>
+      </tr>${body}</tbody>`;
+  }).join("");
+  return `<table>${head}${groups}</table>`;
+}
+
 export function render(root, ctx) {
   const status = ctx.store.status;
   if (!status || status._error) {
@@ -135,7 +269,7 @@ export function render(root, ctx) {
   // Empty-State: freundlicher Einstieg statt nackter Nullen.
   if (!devices.length && !combineds.length) {
     root.innerHTML = `
-      ${emptyState(ctx)}
+      ${emptyState()}
       <div class="stats secondary" style="margin-top:18px">
         <div class="stat"><div class="n">0</div><div class="l">Devices</div></div>
         <div class="stat"><div class="n">0</div><div class="l">Combineds</div></div>
@@ -146,10 +280,17 @@ export function render(root, ctx) {
     return;
   }
 
-  const all = rows(status).sort((a, b) =>
-    (SEV_RANK[a.severity] - SEV_RANK[b.severity]) || a.name.localeCompare(b.name));
-  const filter = root._filter || "all";
+  // State (auf root, überlebt Re-Render + Live-Poll).
+  const statusFilter = root._filter || "all";
   const typeFilter = root._typeFilter || "all";
+  const catFilter = root._catFilter || "all";
+  const sort = root._sort || "attention";
+  const grouped = root._group === true;
+  if (!(root._collapsed instanceof Set)) root._collapsed = new Set();
+  const query = (root._search || "").trim().toLowerCase();
+
+  const all = rows(status).sort(SORTERS[sort] || SORTERS.attention);
+
   const missing = devices.reduce((n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
   const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
   const ready = all.filter((r) => r.severity === "ok").length;
@@ -157,16 +298,35 @@ export function render(root, ctx) {
   const attention = all.filter((r) => r.severity !== "ok").length;
 
   const visible = all.filter((r) =>
-    (filter === "all" || r.severity === filter) &&
-    (typeFilter === "all" || r.kind === typeFilter));
+    (typeFilter === "all" || r.kind === typeFilter) &&
+    matchesStatus(r, statusFilter) &&
+    (catFilter === "all" || r.cat === catFilter) &&
+    (query === "" || r.haystack.includes(query)));
+
+  // Auswahl stabil halten: nur löschen, wenn die Entität wirklich verschwunden
+  // ist (nicht bloß weggefiltert). Initiale Auswahl = erste sichtbare Zeile.
   if (root._sel && !all.find((r) => r.key === root._sel)) root._sel = null;
-  if (root._sel && !visible.find((r) => r.key === root._sel)) root._sel = null;
   if (!root._sel && visible.length) root._sel = visible[0].key;
-  const selected = all.find((r) => r.key === root._sel);
+  const selectedRow = all.find((r) => r.key === root._sel);
+  const selectedVisible = !!visible.find((r) => r.key === root._sel);
 
   const attentionBanner = attention
     ? `<div class="warnbox" style="margin-bottom:14px"><b>${attention}</b> Atomic(s) brauchen Aufmerksamkeit — oben in der Liste.</div>`
     : `<div class="okbox" style="margin-bottom:14px">Alles in Ordnung — keine fehlenden oder degradierten Quellen.</div>`;
+
+  const chipRow = (label, items, attr, active) => `
+    <div class="filter-group">
+      <span class="fg-label">${esc(label)}</span>
+      <div class="filters" aria-label="${esc(label)}">
+        ${items.map(([id, lbl]) =>
+          `<button data-${attr}="${id}" class="${active === id ? "active" : ""}">${esc(lbl)}</button>`).join("")}
+      </div>
+    </div>`;
+
+  const detailInner = selectedRow
+    ? `${selectedVisible ? "" : `<div class="warnbox filter-hint">Ausgewählte Entität ist durch aktuelle Filter ausgeblendet.</div>`}
+       ${detailCard(selectedRow)}`
+    : `<div class="empty">Eintrag wählen, um Details zu sehen.</div>`;
 
   root.innerHTML = `
     <div class="stats">
@@ -178,41 +338,84 @@ export function render(root, ctx) {
       <div class="stat ${errors ? "err" : "ok"}"><div class="n">${errors}</div><div class="l">Fehler</div></div>
     </div>
     ${attentionBanner}
+    <div class="diag-toolbar">
+      <div class="card">
+        <div class="diag-search">
+          <ha-icon icon="mdi:magnify"></ha-icon>
+          <input id="diag-search-input" type="search" autocomplete="off" spellcheck="false"
+            placeholder="Suchen nach Name, Entity ID, Reason oder Quelle…"
+            value="${esc(root._search || "")}">
+        </div>
+        ${chipRow("Typ", TYPE_FILTERS, "type-filter", typeFilter)}
+        ${chipRow("Status", STATUS_FILTERS, "filter", statusFilter)}
+        ${chipRow("Kategorie", CATEGORY_FILTERS, "cat-filter", catFilter)}
+        <div class="toolbar-foot">
+          <div class="left">
+            <label class="sort-select">Sortierung
+              <select id="diag-sort">
+                ${SORT_OPTIONS.map(([id, lbl]) =>
+                  `<option value="${id}" ${sort === id ? "selected" : ""}>${esc(lbl)}</option>`).join("")}
+              </select>
+            </label>
+            <label class="toggle"><input type="checkbox" id="diag-group" ${grouped ? "checked" : ""}> Nach Kategorie gruppieren</label>
+          </div>
+          <span class="result-count">${visible.length} ${visible.length === 1 ? "Ergebnis" : "Ergebnisse"}</span>
+        </div>
+      </div>
+    </div>
     <div class="split">
       <div class="card">
-        <div class="section-head">
-          <h2>Was braucht Aufmerksamkeit?</h2>
-          <div class="filterbar">
-            <div class="filters" aria-label="Eintragstyp">
-              ${TYPE_FILTERS.map(([id, label]) =>
-                `<button data-type-filter="${id}" class="${typeFilter === id ? "active" : ""}">${esc(label)}</button>`).join("")}
-            </div>
-            <div class="filters" aria-label="Status">
-              ${FILTERS.map(([id, label]) =>
-                `<button data-filter="${id}" class="${filter === id ? "active" : ""}">${esc(label)}</button>`).join("")}
-            </div>
-          </div>
-        </div>
-        ${visible.length ? `<table>
-          <thead><tr><th>Name</th><th>Typ</th><th>State</th><th>Avail</th><th>Missing</th><th>Reason</th></tr></thead>
-          <tbody>${visible.map((r) => `
-            <tr class="clickable ${r.key === root._sel ? "selected-row" : ""}" data-row="${esc(r.key)}">
-              <td>${esc(r.name)}</td>
-              <td class="muted">${esc(r.type)}</td>
-              <td>${esc(r.state)}</td>
-              <td class="s-${r.severity}">${esc(r.available)}</td>
-              <td>${r.missing ? chip("warn", r.missing) : "0"}</td>
-              <td class="muted">${esc(r.reason)}</td>
-            </tr>`).join("")}</tbody>
-        </table>` : `<div class="empty">Keine Einträge für diesen Filter.</div>`}
+        ${visible.length ? tableHtml(visible, grouped, root._collapsed, root._sel)
+          : `<div class="empty">Keine Einträge für die aktuellen Filter.</div>`}
       </div>
-      <div id="detail">${selected ? detailCard(selected) : `<div class="empty">Eintrag wählen, um Details zu sehen.</div>`}</div>
+      <div id="detail" class="diag-detail">${detailInner}</div>
     </div>`;
 
+  // Detail-Panel-Höhe an die Sticky-Leiste koppeln (Viewport-relativ scrollbar).
+  const tb = root.querySelector(".diag-toolbar");
+  if (tb) root.style.setProperty("--toolbar-h", `${tb.offsetHeight}px`);
+
+  // Filter-Chips
   root.querySelectorAll("[data-filter]").forEach((b) =>
     b.addEventListener("click", () => { root._filter = b.dataset.filter; ctx.rerender(); }));
   root.querySelectorAll("[data-type-filter]").forEach((b) =>
     b.addEventListener("click", () => { root._typeFilter = b.dataset.typeFilter; ctx.rerender(); }));
+  root.querySelectorAll("[data-cat-filter]").forEach((b) =>
+    b.addEventListener("click", () => { root._catFilter = b.dataset.catFilter; ctx.rerender(); }));
+
+  // Sortierung + Gruppierung
+  const sortSel = root.querySelector("#diag-sort");
+  if (sortSel) sortSel.addEventListener("change", () => { root._sort = sortSel.value; ctx.rerender(); });
+  const groupChk = root.querySelector("#diag-group");
+  if (groupChk) groupChk.addEventListener("change", () => { root._group = groupChk.checked; ctx.rerender(); });
+
+  // Kategorie-Gruppen ein-/ausklappen
+  root.querySelectorAll("tr.group-row").forEach((tr) =>
+    tr.addEventListener("click", () => {
+      const k = tr.dataset.cat;
+      if (root._collapsed.has(k)) root._collapsed.delete(k); else root._collapsed.add(k);
+      ctx.rerender();
+    }));
+
+  // Zeilen-Auswahl
   root.querySelectorAll("[data-row]").forEach((tr) =>
     tr.addEventListener("click", () => { root._sel = tr.dataset.row; ctx.rerender(); }));
+
+  // Live-Suche mit Debounce; Fokus + Cursor über Re-Render hinweg erhalten.
+  const search = root.querySelector("#diag-search-input");
+  if (search) {
+    search.addEventListener("input", () => {
+      root._search = search.value;
+      root._searchFocused = true;
+      root._searchCaret = search.selectionStart;
+      clearTimeout(root._searchTimer);
+      root._searchTimer = setTimeout(() => ctx.rerender(), 200);
+    });
+    search.addEventListener("blur", () => { root._searchFocused = false; });
+    if (root._searchFocused) {
+      search.focus();
+      const pos = root._searchCaret ?? search.value.length;
+      try { search.setSelectionRange(pos, pos); } catch (_e) { /* search input */ }
+    }
+  }
 }

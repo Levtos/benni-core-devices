@@ -196,6 +196,32 @@ td.s-err { color: var(--red); } td.s-warn { color: var(--amber); } td.s-ok { col
 .okbox { border: 1px solid #2c5138; background: #16251b; border-radius: 9px; padding: 10px 12px; color: var(--green); font-size: 12px; }
 
 .empty { border: 1px dashed var(--line); border-radius: 10px; color: var(--muted); padding: 22px; text-align: center; }
+
+/* Diagnose: sticky Such-/Filterleiste (QoL) */
+.diag-toolbar { position: sticky; top: 0; z-index: 6; background: var(--bg); padding: 6px 0 10px; margin-bottom: 14px; }
+.diag-toolbar .card { padding: 12px 14px; }
+.diag-search { position: relative; }
+.diag-search input { padding-left: 34px; }
+.diag-search ha-icon { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--faint); --mdc-icon-size: 18px; pointer-events: none; }
+.filter-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+.filter-group .fg-label { color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; min-width: 62px; }
+.toolbar-foot { display: flex; gap: 14px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
+.toolbar-foot .left { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+.sort-select { display: flex; gap: 7px; align-items: center; color: var(--muted); font-size: 12px; }
+.sort-select select { width: auto; min-height: 32px; padding: 5px 9px; }
+.result-count { color: var(--faint); font-size: 12px; }
+.toggle { display: inline-flex; align-items: center; gap: 7px; color: var(--muted); font-size: 12px; cursor: pointer; user-select: none; }
+.toggle input { width: auto; min-height: auto; margin: 0; }
+
+/* Diagnose: sticky Detail-Panel (QoL) */
+.diag-detail { position: sticky; top: calc(var(--toolbar-h, 150px) + 12px); max-height: calc(100vh - var(--toolbar-h, 150px) - 28px); overflow: auto; }
+.diag-detail .filter-hint { margin-bottom: 12px; }
+
+/* Diagnose: collapsible Kategorie-Gruppen (QoL) */
+tr.group-row td { background: var(--surface2); color: var(--fg); font-weight: 650; cursor: pointer; }
+tr.group-row td::before { content: "›"; color: var(--purple); display: inline-block; margin-right: 9px; transition: transform .15s; }
+tr.group-row.open td::before { transform: rotate(90deg); }
+tr.group-row .cnt { color: var(--faint); font-weight: 400; margin-left: 6px; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: var(--surface); border: 1px solid var(--purple); border-radius: 9px; padding: 10px 16px; z-index: 10; }
 
 @media (max-width: 900px) {

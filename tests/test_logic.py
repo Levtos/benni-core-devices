@@ -663,14 +663,25 @@ def _wp_inputs(switch: str | None, watt: float | None):
 
 
 def test_watt_primary_plug_on_zero_watt_is_off():
-    """Der Kaffee-Fall: Plug an, aber 0 W → Gerät ist aus."""
+    """Der Kaffee-Fall: Plug an, aber 0 W → Gerät ist aus. Normaler Idle-Zustand,
+    KEINE Degradierung → watt_disagrees bleibt False."""
     cfg = _config(threshold=5)
     inp = _wp_inputs("on", 0.0)
     r = L.compute_device(cfg, inp, _persisted(), NOW, watt_primary=True)
     assert r.powered is False
     assert r.state == "off"
     assert r.power_source == C.PowerSource.WATT_PRIMARY.value
-    assert r.watt_disagrees is True  # Schalter sagt on, Watt sagt off
+    assert r.watt_disagrees is False  # Plug an + 0 W = normal, kein Konflikt
+
+
+def test_watt_primary_plug_off_but_drawing_flags_disagreement():
+    """Überraschender Konflikt: Plug meldet AUS, es fließt aber Strom → flaggen."""
+    cfg = _config(threshold=5)
+    inp = _wp_inputs("off", 80.0)
+    r = L.compute_device(cfg, inp, _persisted(), NOW, watt_primary=True)
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+    assert r.watt_disagrees is True
 
 
 def test_watt_primary_plug_on_high_watt_is_on():

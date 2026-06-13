@@ -347,10 +347,11 @@ def compute_device(
 
     # ── R-DC-05: Konflikt Integration vs. Watt
     watt_disagrees = False
-    if watt_primary and watt_fresh and integration_fresh and integration_bool is not None:
-        # Watt-primär: flagge, wenn der Plug-Schalter dem Watt-Urteil widerspricht
-        # (typisch: Plug "on", aber 0 W → Gerät idle).
-        if integration_bool != powered:
+    if watt_primary and watt_fresh:
+        # Watt-primär: NUR der überraschende Konflikt ist meldenswert — der Plug
+        # meldet AUS, es fließt aber Strom (≥ Threshold). „Plug an + ~0 W" ist
+        # der normale Idle-Zustand eines bestromten Geräts und KEINE Degradierung.
+        if integration_fresh and integration_bool is False and watt_on:
             watt_disagrees = True
     elif source is PowerSource.INTEGRATION and watt_fresh and watt is not None:
         # Integration sagt off, aber Watt über Threshold? → flagge

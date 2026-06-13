@@ -49,6 +49,12 @@ ATOMIC_CLASS_SLUGS: Final[tuple[str, ...]] = tuple(c.value for c in AtomicClass)
 
 # Power-Modelle (steuern den Compute-Pfad im Coordinator/logic).
 POWER_MODEL_INTEGRATION_WATT_STICKY: Final[str] = "integration_watt_sticky"
+# Watt-primär: die reale Leistung (power_meter) entscheidet über powered/active;
+# der Integrations-Schalter (Plug an/aus) ist nur Fallback, wenn der Meter
+# keinen frischen Wert hat. Ein Halte-Fenster (sticky_hold_seconds) überbrückt
+# kurze Null-Watt-Phasen mitten im Gerätezyklus (Einweichen/Pause). Für Plugs
+# mit Energy-Meter, wo „Plug bestromt" ≠ „Gerät läuft".
+POWER_MODEL_WATT_PRIMARY_STICKY: Final[str] = "watt_primary_sticky"
 POWER_MODEL_PASSTHROUGH: Final[str] = "passthrough_state"
 POWER_MODEL_NUMERIC: Final[str] = "numeric"
 
@@ -212,6 +218,7 @@ POWER_STATE_SLUGS: Final[tuple[str, ...]] = tuple(s.value for s in PowerState)
 
 class PowerSource(str, Enum):
     INTEGRATION = "integration"
+    WATT_PRIMARY = "watt_primary"
     WATT_FALLBACK = "watt_fallback"
     STICKY_HOLD = "sticky_hold"
     OVERRIDE = "override"

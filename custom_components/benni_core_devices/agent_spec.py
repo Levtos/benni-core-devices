@@ -209,7 +209,10 @@ dry-run before applying.
 {_DEVICE_EXAMPLE}
 
 Runtime keys (`watt_threshold_on`, `sticky_hold_seconds`, `expose_secondary_sensors`,
-`watt_buckets`) apply to `integration_watt_sticky` classes (media/audio/console/power).
+`watt_buckets`) apply to `integration_watt_sticky` (media/audio/console) and
+`watt_primary_sticky` (power) classes. For `watt_primary_sticky` the real power
+(`power_meter`) decides powered/active; the plug switch is only a fallback when the
+meter is stale, and `sticky_hold_seconds` bridges short zero-watt phases mid-cycle.
 
 ## Combined config
 output_type: {", ".join(f"`{t}`" for t in OUTPUT_TYPE_CHOICES)} ·

@@ -45,11 +45,13 @@ def _persisted(
     last_powered: bool | None = None,
     last_change: datetime | None = None,
     override: L.Override | None = None,
+    last_watt_active: datetime | None = None,
 ) -> L.DevicePersisted:
     return L.DevicePersisted(
         last_powered=last_powered,
         last_powered_change=last_change,
         override=override,
+        last_watt_active=last_watt_active,
     )
 
 
@@ -638,3 +640,87 @@ def test_climate_class_spec():
     }
     assert "comfort" not in spec.extra_attributes
     assert "eco" not in spec.extra_attributes
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# watt_primary: reale Leistung schlägt den Plug-Schalter (Plugs mit Energy-Meter)
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _wp_inputs(switch: str | None, watt: float | None):
+    """Power-Device-Slots: Plug-Schalter (integration) + Watt-Meter, state_slot=None."""
+    slots = {"switch_entity": _reading(switch)}
+    if watt is not None:
+        slots["watt_sensor"] = _reading(str(watt), numeric=watt)
+    else:
+        slots["watt_sensor"] = _reading(None)
+    return _inputs(
+        slots,
+        integration_slot="switch_entity",
+        state_slot=None,
+        watt_slot="watt_sensor",
+    )
+
+
+def test_watt_primary_plug_on_zero_watt_is_off():
+    """Der Kaffee-Fall: Plug an, aber 0 W → Gerät ist aus."""
+    cfg = _config(threshold=5)
+    inp = _wp_inputs("on", 0.0)
+    r = L.compute_device(cfg, inp, _persisted(), NOW, watt_primary=True)
+    assert r.powered is False
+    assert r.state == "off"
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+    assert r.watt_disagrees is True  # Schalter sagt on, Watt sagt off
+
+
+def test_watt_primary_plug_on_high_watt_is_on():
+    cfg = _config(threshold=5)
+    inp = _wp_inputs("on", 170.0)
+    r = L.compute_device(cfg, inp, _persisted(), NOW, watt_primary=True)
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+    assert r.watt_disagrees is False
+    assert r.last_watt_active == NOW
+
+
+def test_watt_primary_hold_bridges_short_zero_watt_dip():
+    """Null-Watt mitten im Zyklus: solange < sticky_hold seit letzter Aktivität,
+    bleibt das Gerät on (überbrückt Einweich-/Pausenphasen)."""
+    cfg = _config(threshold=5, sticky=60)
+    inp = _wp_inputs("on", 0.0)
+    persisted = _persisted(
+        last_powered=True, last_watt_active=NOW - timedelta(seconds=30)
+    )
+    r = L.compute_device(cfg, inp, persisted, NOW, watt_primary=True)
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.STICKY_HOLD.value
+
+
+def test_watt_primary_hold_expires_after_window():
+    cfg = _config(threshold=5, sticky=60)
+    inp = _wp_inputs("on", 0.0)
+    persisted = _persisted(
+        last_powered=True, last_watt_active=NOW - timedelta(seconds=120)
+    )
+    r = L.compute_device(cfg, inp, persisted, NOW, watt_primary=True)
+    assert r.powered is False
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+
+
+def test_watt_primary_falls_back_to_switch_when_meter_stale():
+    """Watt-Meter unavailable → Plug-Schalter übernimmt (Fallback)."""
+    cfg = _config(threshold=5)
+    inp = _wp_inputs("on", None)
+    r = L.compute_device(cfg, inp, _persisted(), NOW, watt_primary=True)
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.INTEGRATION.value
+
+
+def test_watt_primary_default_off_keeps_integration_first():
+    """Ohne watt_primary bleibt die alte Integration-first-Hierarchie bestehen
+    (Media/Audio/Console-Klassen)."""
+    cfg = _config(threshold=5)
+    inp = _wp_inputs("on", 0.0)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)  # watt_primary default False
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.INTEGRATION.value

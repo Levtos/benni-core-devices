@@ -121,6 +121,10 @@ class DevicePersisted:
     override: Override | None
     # v2: letzter gültiger State (für fail_safe=hold_last bei passthrough/numeric).
     last_state: str | None = None
+    # watt_primary: Zeitpunkt, zu dem die Leistung zuletzt ≥ Threshold war. Das
+    # Halte-Fenster (sticky_hold_seconds) misst ab hier, um kurze Null-Watt-
+    # Phasen mitten im Zyklus zu überbrücken.
+    last_watt_active: datetime | None = None
 
 
 @dataclass(frozen=True)
@@ -151,6 +155,9 @@ class DeviceResult:
     extra: dict[str, Any] = field(default_factory=dict)
     # v2: True wenn keine Quelle frisch war und der fail_safe-Wert greift.
     fail_safe_active: bool = False
+    # watt_primary: fortgeschriebener „zuletzt aktiv"-Zeitstempel fürs Halte-
+    # Fenster. Der Coordinator persistiert ihn zurück in DevicePersisted.
+    last_watt_active: datetime | None = None
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -232,6 +239,8 @@ def compute_device(
     inputs: DeviceInputs,
     persisted: DevicePersisted,
     now: datetime,
+    *,
+    watt_primary: bool = False,
 ) -> DeviceResult:
     """Wertet alle Regeln R-DC-01..R-DC-09 aus.
 
@@ -241,6 +250,13 @@ def compute_device(
     3. Watt-Fallback (R-DC-01.2)
     4. Sticky-Hold (R-DC-01.3), aber nicht in Boot-Phase (R-DC-09)
     5. Sonst: powered=None, power_source="none"
+
+    ``watt_primary`` kehrt 2↔3 um: ist ein frischer Watt-Wert vorhanden,
+    entscheidet die reale Leistung über ``powered`` (≥ ``watt_threshold_on``),
+    und der Integrations-Schalter (Plug) zählt nur als Fallback bei stalem
+    Meter. Ein Halte-Fenster (``sticky_hold_seconds`` ab ``last_watt_active``)
+    überbrückt kurze Null-Watt-Phasen im Gerätezyklus. Für Plugs mit
+    Energy-Meter, wo „Plug bestromt" ≠ „Gerät läuft".
 
     Zusätzlich immer:
     - power_state aus Watt-Buckets (R-DC-06), unabhängig von 1-4
@@ -282,17 +298,42 @@ def compute_device(
             watt=watt,
             raw_state=state_reading.value if state_reading else None,
             extra=state_reading.attributes if state_reading else {},
+            last_watt_active=persisted.last_watt_active,
         )
 
     # ── R-DC-01: Fallback-Hierarchie für `powered`
     powered: bool | None = None
     source = PowerSource.NONE
-    if integration_fresh and integration_bool is not None:
+    last_watt_active = persisted.last_watt_active
+    watt_on = watt_fresh and watt is not None and watt >= config.watt_threshold_on
+
+    if watt_primary and watt_fresh:
+        # Watt-primär: die reale Leistung entscheidet. Der Plug-Schalter sagt
+        # nur, dass Strom anliegt — nicht, dass das Gerät läuft.
+        if watt_on:
+            powered = True
+            source = PowerSource.WATT_PRIMARY
+            last_watt_active = now
+        else:
+            # Halte-Fenster: kurze Null-Watt-Dips (Einweichen/Pause) überbrücken,
+            # solange das Gerät zuletzt innerhalb sticky_hold_seconds aktiv war.
+            held = (
+                persisted.last_powered is True
+                and last_watt_active is not None
+                and (now - last_watt_active).total_seconds() <= config.sticky_hold_seconds
+            )
+            powered = True if held else False
+            source = PowerSource.STICKY_HOLD if held else PowerSource.WATT_PRIMARY
+    elif integration_fresh and integration_bool is not None:
         powered = integration_bool
         source = PowerSource.INTEGRATION
+        if watt_on:
+            last_watt_active = now
     elif watt_fresh:
-        powered = bool(watt is not None and watt >= config.watt_threshold_on)
+        powered = watt_on
         source = PowerSource.WATT_FALLBACK
+        if watt_on:
+            last_watt_active = now
     elif not inputs.boot_phase_active:
         # Sticky-Hold (R-DC-02), nur außerhalb Boot-Phase (R-DC-09)
         age = _sticky_age_seconds(persisted, now)
@@ -306,7 +347,12 @@ def compute_device(
 
     # ── R-DC-05: Konflikt Integration vs. Watt
     watt_disagrees = False
-    if source is PowerSource.INTEGRATION and watt_fresh and watt is not None:
+    if watt_primary and watt_fresh and integration_fresh and integration_bool is not None:
+        # Watt-primär: flagge, wenn der Plug-Schalter dem Watt-Urteil widerspricht
+        # (typisch: Plug "on", aber 0 W → Gerät idle).
+        if integration_bool != powered:
+            watt_disagrees = True
+    elif source is PowerSource.INTEGRATION and watt_fresh and watt is not None:
         # Integration sagt off, aber Watt über Threshold? → flagge
         if powered is False and watt >= config.watt_threshold_on:
             watt_disagrees = True
@@ -328,6 +374,7 @@ def compute_device(
         watt=watt,
         raw_state=state_reading.value if state_reading else None,
         extra=state_reading.attributes if state_reading else {},
+        last_watt_active=last_watt_active,
     )
 
 
@@ -430,6 +477,7 @@ def compute_passthrough(
             watt_disagrees=False, watt=None,
             raw_state=state_reading.value if state_reading else None,
             extra=state_reading.attributes if state_reading else {},
+            last_watt_active=persisted.last_watt_active,
         )
 
     fresh = _has_value(state_reading)
@@ -461,6 +509,7 @@ def compute_passthrough(
         last_powered_change=new_last_change, override_active=False,
         watt_disagrees=False, watt=None, raw_state=raw, extra=extra,
         fail_safe_active=fail_safe_active,
+        last_watt_active=persisted.last_watt_active,
     )
 
 
@@ -484,6 +533,7 @@ def compute_numeric(
             watt_disagrees=False, watt=reading.numeric if reading else None,
             raw_state=reading.value if reading else None,
             extra=reading.attributes if reading else {},
+            last_watt_active=persisted.last_watt_active,
         )
 
     fresh = _has_value(reading)
@@ -503,6 +553,7 @@ def compute_numeric(
         watt_disagrees=False, watt=reading.numeric if reading else None,
         raw_state=reading.value if reading else None, extra=extra,
         fail_safe_active=fail_safe_active,
+        last_watt_active=persisted.last_watt_active,
     )
 
 

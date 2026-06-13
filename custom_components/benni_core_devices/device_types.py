@@ -47,6 +47,7 @@ from .const import (
     POWER_MODEL_INTEGRATION_WATT_STICKY,
     POWER_MODEL_NUMERIC,
     POWER_MODEL_PASSTHROUGH,
+    POWER_MODEL_WATT_PRIMARY_STICKY,
     AtomicClass,
 )
 
@@ -226,7 +227,7 @@ ATOMIC_CLASSES: Final[dict[str, AtomicClassSpec]] = {c.atomic_class: c for c in 
     AtomicClassSpec(
         atomic_class=AtomicClass.POWER_DEVICE.value,
         variants=("plug", "pc", "subwoofer", "appliance"),
-        power_model=POWER_MODEL_INTEGRATION_WATT_STICKY,
+        power_model=POWER_MODEL_WATT_PRIMARY_STICKY,
         integration_roles=("primary_state",), state_role=None,
         required_roles=("primary_state", "power_meter"), required_mode="any",
         fail_safe=FAIL_SAFE_OFF,

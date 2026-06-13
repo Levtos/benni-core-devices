@@ -33,6 +33,7 @@ from .const import (
     DOMAIN,
     POWER_MODEL_NUMERIC,
     POWER_MODEL_PASSTHROUGH,
+    POWER_MODEL_WATT_PRIMARY_STICKY,
     STORAGE_KEY_LAST_POWERED,
     STORAGE_KEY_LAST_POWERED_CHANGE,
     STORAGE_KEY_OVERRIDE,
@@ -58,6 +59,7 @@ from .slot_reader import slot_reading_from_values
 _LOGGER = logging.getLogger(__name__)
 
 STORAGE_KEY_LAST_STATE = "last_state"
+STORAGE_KEY_LAST_WATT_ACTIVE = "last_watt_active"
 
 
 class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
@@ -85,7 +87,8 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             hass, STORAGE_VERSION, storage_key(entry.entry_id, slug, self._profile_name)
         )
         self._persisted = DevicePersisted(
-            last_powered=None, last_powered_change=None, override=None, last_state=None
+            last_powered=None, last_powered_change=None, override=None, last_state=None,
+            last_watt_active=None,
         )
         self._unsub_listeners: list[CALLBACK_TYPE] = []
         self._boot_start: datetime = dt_util.now()
@@ -184,6 +187,7 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             last_powered_change=self._persisted.last_powered_change,
             override=override,
             last_state=self._persisted.last_state,
+            last_watt_active=self._persisted.last_watt_active,
         )
         await self._async_save()
         result = self._compute()
@@ -196,6 +200,7 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
             last_powered_change=self._persisted.last_powered_change,
             override=None,
             last_state=self._persisted.last_state,
+            last_watt_active=self._persisted.last_watt_active,
         )
         await self._async_save()
         result = self._compute()
@@ -217,7 +222,10 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
         elif pm == POWER_MODEL_PASSTHROUGH:
             result = logic.compute_passthrough(config, inputs, self._persisted, now)
         else:
-            result = logic.compute_device(config, inputs, self._persisted, now)
+            result = logic.compute_device(
+                config, inputs, self._persisted, now,
+                watt_primary=(pm == POWER_MODEL_WATT_PRIMARY_STICKY),
+            )
 
         if (
             self._persisted.override is not None
@@ -228,24 +236,29 @@ class DeviceCoordinator(DataUpdateCoordinator[DeviceResult]):
                 last_powered_change=self._persisted.last_powered_change,
                 override=None,
                 last_state=self._persisted.last_state,
+                last_watt_active=self._persisted.last_watt_active,
             )
         return result
 
     async def _persist_if_changed(self, result: DeviceResult) -> None:
         new_state = result.state if not result.fail_safe_active else self._persisted.last_state
-        if (
-            result.powered == self._persisted.last_powered
-            and result.last_powered_change == self._persisted.last_powered_change
-            and new_state == self._persisted.last_state
-        ):
-            return
+        durable_changed = (
+            result.powered != self._persisted.last_powered
+            or result.last_powered_change != self._persisted.last_powered_change
+            or new_state != self._persisted.last_state
+        )
+        # last_watt_active immer in-memory fortschreiben (das Halte-Fenster misst
+        # ab letzter Aktivität), aber nur bei einer dauerhaften Änderung auf die
+        # Platte schreiben — sonst I/O bei jedem Watt-Tick.
         self._persisted = DevicePersisted(
             last_powered=result.powered,
             last_powered_change=result.last_powered_change,
             override=self._persisted.override,
             last_state=new_state,
+            last_watt_active=result.last_watt_active,
         )
-        await self._async_save()
+        if durable_changed:
+            await self._async_save()
 
     def _build_logic_config(self) -> DeviceConfig:
         return DeviceConfig(
@@ -551,6 +564,9 @@ def _persisted_to_dict(p: DevicePersisted) -> dict[str, Any]:
             p.last_powered_change.isoformat() if p.last_powered_change else None
         ),
         STORAGE_KEY_LAST_STATE: p.last_state,
+        STORAGE_KEY_LAST_WATT_ACTIVE: (
+            p.last_watt_active.isoformat() if p.last_watt_active else None
+        ),
         STORAGE_KEY_OVERRIDE: None,
     }
     if p.override is not None:
@@ -578,6 +594,7 @@ def _persisted_from_dict(raw: dict[str, Any]) -> DevicePersisted:
         last_powered_change=_parse_iso(raw.get(STORAGE_KEY_LAST_POWERED_CHANGE)),
         override=override,
         last_state=raw.get(STORAGE_KEY_LAST_STATE),
+        last_watt_active=_parse_iso(raw.get(STORAGE_KEY_LAST_WATT_ACTIVE)),
     )
 
 

@@ -187,6 +187,34 @@ def _as_bool(value: str | None) -> bool | None:
     return None
 
 
+def _is_assumed(reading: SlotReading | None) -> bool:
+    """Quelle meldet ``assumed_state`` (HA rät den Zustand, liest ihn nicht real).
+
+    HA legt das Flag als State-Attribut ab; truthy ⇒ die on/off-Angabe ist
+    unzuverlässig. Nur bei vorhandenem Wert relevant (None-Quelle ist ohnehin
+    nicht power-bestimmend).
+    """
+    if reading is None or reading.value is None:
+        return False
+    return bool(reading.attributes.get("assumed_state"))
+
+
+def _state_from_power(power_state: str, powered: bool | None) -> str:
+    """Haupt-State aus realer Leistung, wenn die geratene Quelle verworfen wird.
+
+    Nutzt die Watt-Bucket-Granularität (idle/playing/standby), fällt aber auf
+    schlichtes on/off zurück, wenn die Buckets nichts Brauchbares liefern
+    (unknown/off bei powered=True wäre widersprüchlich → watt hat „on" entschieden).
+    """
+    if powered is True:
+        if power_state not in (PowerState.UNKNOWN.value, PowerState.OFF.value):
+            return power_state
+        return "on"
+    if powered is False:
+        return "off"
+    return "unavailable"
+
+
 def _has_value(reading: SlotReading | None) -> bool:
     """Slot hat einen gültigen Wert (nicht unavailable/unknown).
 
@@ -258,6 +286,17 @@ def compute_device(
     überbrückt kurze Null-Watt-Phasen im Gerätezyklus. Für Plugs mit
     Energy-Meter, wo „Plug bestromt" ≠ „Gerät läuft".
 
+    FLEET-83 (generische Härtung): meldet die Integrations-/State-Quelle
+    ``assumed_state`` (HA *rät* den Zustand statt ihn real zu lesen — z. B. ein
+    webOS-TV-Player im Netz-Standby, der dauerhaft „off" zeigt obwohl 440 W
+    fließen), ist sie als Power- UND State-Quelle unzuverlässig. Liegt ein
+    frischer Watt-Wert vor, schaltet das Atomic für dieses Tick automatisch auf
+    watt-primär — unabhängig vom übergebenen ``watt_primary``. ``powered`` und
+    der Haupt-State folgen dann der realen Leistung (mit Halte-Fenster); der
+    geratene on/off-State wird verworfen. Der erwartbare „Player aus + Strom
+    fließt"-Konflikt wird NICHT als ``watt_disagrees`` geflaggt (kein Fault,
+    sondern Bauart der assumed-Quelle).
+
     Zusätzlich immer:
     - power_state aus Watt-Buckets (R-DC-06), unabhängig von 1-4
     - available (R-DC-03)
@@ -274,6 +313,14 @@ def compute_device(
     integration_fresh = _has_value(integration_reading)
     integration_bool = _as_bool(integration_reading.value) if integration_reading else None
     watt_fresh = watt_reading is not None and watt is not None
+
+    # ── FLEET-83: assumed-state-Quelle erkennen → automatisch watt-primär.
+    # ``assumed_state`` steht in den HA-Attributen der Integrations-/State-Quelle
+    # (für Media ist beides dieselbe primary_state-Entity). Greift nur, wenn ein
+    # frischer Watt-Wert die geratene Quelle ersetzen kann.
+    assumed_source = _is_assumed(integration_reading) or _is_assumed(state_reading)
+    assumed_unreliable = assumed_source and watt_fresh
+    effective_watt_primary = watt_primary or assumed_unreliable
 
     # ── power_state: immer aus Watt (R-DC-06)
     power_state = classify_power_state(watt, config.watt_buckets)
@@ -307,7 +354,7 @@ def compute_device(
     last_watt_active = persisted.last_watt_active
     watt_on = watt_fresh and watt is not None and watt >= config.watt_threshold_on
 
-    if watt_primary and watt_fresh:
+    if effective_watt_primary and watt_fresh:
         # Watt-primär: die reale Leistung entscheidet. Der Plug-Schalter sagt
         # nur, dass Strom anliegt — nicht, dass das Gerät läuft.
         if watt_on:
@@ -347,11 +394,13 @@ def compute_device(
 
     # ── R-DC-05: Konflikt Integration vs. Watt
     watt_disagrees = False
-    if watt_primary and watt_fresh:
+    if effective_watt_primary and watt_fresh:
         # Watt-primär: NUR der überraschende Konflikt ist meldenswert — der Plug
         # meldet AUS, es fließt aber Strom (≥ Threshold). „Plug an + ~0 W" ist
         # der normale Idle-Zustand eines bestromten Geräts und KEINE Degradierung.
-        if integration_fresh and integration_bool is False and watt_on:
+        # assumed-Quellen sind strukturell unzuverlässig (sie raten nur) → ihr
+        # „off bei Strom" ist erwartbar, kein Fault. Nicht flaggen.
+        if integration_fresh and integration_bool is False and watt_on and not assumed_source:
             watt_disagrees = True
     elif source is PowerSource.INTEGRATION and watt_fresh and watt is not None:
         # Integration sagt off, aber Watt über Threshold? → flagge
@@ -363,8 +412,17 @@ def compute_device(
     if powered != persisted.last_powered:
         new_last_change = now
 
+    # ── Haupt-State (R-DC-04). Bei einer assumed-Quelle, die watt-primär
+    # überstimmt wurde, ist der geratene Player-State („off") wertlos → State
+    # aus der realen Leistung ableiten, sonst läse media_state das Atomic trotz
+    # 440 W als „off" (FLEET-83).
+    if assumed_unreliable:
+        state = _state_from_power(power_state, powered)
+    else:
+        state = _compute_state(state_reading, powered, inputs.state_slot)
+
     return DeviceResult(
-        state=_compute_state(state_reading, powered, inputs.state_slot),
+        state=state,
         powered=powered,
         power_state=power_state,
         power_source=source.value,

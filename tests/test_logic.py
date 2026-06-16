@@ -735,3 +735,116 @@ def test_watt_primary_default_off_keeps_integration_first():
     r = L.compute_device(cfg, inp, _persisted(), NOW)  # watt_primary default False
     assert r.powered is True
     assert r.power_source == C.PowerSource.INTEGRATION.value
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FLEET-83: assumed_state-Quelle (webOS-TV) → automatisch watt-primär
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+def _media_reading(value: str | None, *, assumed: bool = False) -> L.SlotReading:
+    """Player-Reading wie ein media_device — integration_slot == state_slot."""
+    return L.SlotReading(
+        value=value,
+        numeric=None,
+        attributes={"assumed_state": True} if assumed else {},
+        last_updated=NOW if value is not None else None,
+    )
+
+
+def _media_inputs(player: str | None, watt: float | None, *, assumed: bool):
+    """media_device-Slots: primary_state (Player) == integration- & state-Slot,
+    plus optionaler Watt-Meter."""
+    slots = {"player": _media_reading(player, assumed=assumed)}
+    slots["watt_sensor"] = (
+        _reading(str(watt), numeric=watt) if watt is not None else _reading(None)
+    )
+    return _inputs(
+        slots,
+        integration_slot="player",
+        state_slot="player",
+        watt_slot="watt_sensor",
+    )
+
+
+def test_assumed_player_off_high_watt_is_on():
+    """Der TV-Blocker: webOS-Player rät dauerhaft „off", Plug zieht 440 W →
+    Atomic muss watt-primär auf powered/on schalten (ohne explizites
+    watt_primary, ohne Konflikt-Flag)."""
+    cfg = _config(threshold=50)
+    inp = _media_inputs("off", 440.0, assumed=True)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)  # watt_primary default False!
+    assert r.powered is True
+    assert r.state == "on"
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+    assert r.watt_disagrees is False  # assumed-Quelle ratet → kein Fault
+    assert r.last_watt_active == NOW
+
+
+def test_assumed_player_off_zero_watt_is_off():
+    """TV wirklich aus (0 W) → off, sauber."""
+    cfg = _config(threshold=50)
+    inp = _media_inputs("off", 0.0, assumed=True)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)
+    assert r.powered is False
+    assert r.state == "off"
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
+
+
+def test_assumed_player_standby_below_threshold_is_off():
+    """Netz-Standby ~35 W unter Schwelle (≥50) → NICHT an."""
+    cfg = _config(threshold=50)
+    inp = _media_inputs("off", 35.0, assumed=True)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)
+    assert r.powered is False
+    assert r.state == "off"
+
+
+def test_assumed_player_state_uses_watt_bucket_granularity():
+    """Mit Watt-Buckets liefert der Haupt-State die Granularität (playing),
+    nicht nur on/off — der geratene Player-State wird verworfen."""
+    buckets = (
+        L.WattBucket(state="off", op="<=", value=50),
+        L.WattBucket(state="playing", op=">", value=50),
+    )
+    cfg = _config(threshold=50, buckets=buckets)
+    inp = _media_inputs("off", 440.0, assumed=True)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)
+    assert r.powered is True
+    assert r.power_state == "playing"
+    assert r.state == "playing"
+
+
+def test_assumed_player_hold_bridges_short_watt_dip():
+    """Kurzer Watt-Dip beim Umschalten → Halte-Fenster hält den TV on."""
+    cfg = _config(threshold=50, sticky=60)
+    inp = _media_inputs("off", 0.0, assumed=True)
+    persisted = _persisted(
+        last_powered=True, last_watt_active=NOW - timedelta(seconds=20)
+    )
+    r = L.compute_device(cfg, inp, persisted, NOW)
+    assert r.powered is True
+    assert r.power_source == C.PowerSource.STICKY_HOLD.value
+
+
+def test_assumed_player_stale_watt_falls_back_to_player():
+    """Ohne frischen Watt-Wert bleibt nur die (geratene) Player-Quelle — keine
+    watt-primäre Übersteuerung, alte Hierarchie greift."""
+    cfg = _config(threshold=50)
+    inp = _media_inputs("off", None, assumed=True)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)
+    assert r.powered is False  # Player „off" via Integration
+    assert r.power_source == C.PowerSource.INTEGRATION.value
+    assert r.state == "off"
+
+
+def test_non_assumed_player_keeps_integration_first():
+    """Regression: ein NICHT-assumed Player (real lesbar) behält Integration-first
+    — watt übersteuert nur bei assumed_state."""
+    cfg = _config(threshold=50)
+    inp = _media_inputs("off", 440.0, assumed=False)
+    r = L.compute_device(cfg, inp, _persisted(), NOW)
+    assert r.powered is False
+    assert r.power_source == C.PowerSource.INTEGRATION.value
+    # Echter Konflikt (real-off + Strom) wird hier sehr wohl geflaggt.
+    assert r.watt_disagrees is True

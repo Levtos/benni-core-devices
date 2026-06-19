@@ -352,7 +352,8 @@ def _eval(node: Any, env: dict[str, Any]) -> Any:
         if op in ("==", "!="):
             na, nb = as_num(la), as_num(lb)
             if la is None or lb is None:
-                return None
+                eq = la is None and lb is None
+                return eq if op == "==" else (not eq)
             if na is not None and nb is not None:
                 eq = na == nb
             else:

@@ -37,6 +37,13 @@ def test_expr_string_compare():
     assert E.eval_expr('${m} == "tv"', {"m": "appletv"}) is False
 
 
+def test_expr_null_compare():
+    assert E.eval_expr("${m} == null", {"m": None}) is True
+    assert E.eval_expr("${m} != null", {"m": None}) is False
+    assert E.eval_expr("${m} == null", {"m": "off"}) is False
+    assert E.eval_expr("any([${m}, true])", {"m": None}) is None
+
+
 def test_dew_point_formula():
     v = E.eval_expr("${t} - (100 - ${rh}) / 5", {"t": 22.0, "rh": 60.0})
     assert abs(v - 14.0) < 1e-9
@@ -98,6 +105,36 @@ def test_expr_node_number_output():
     )
     res = CB.evaluate_combined(cfg, {"t": _r("22.0", 22.0), "rh": _r("60", 60.0)})
     assert res.state == "14"
+
+
+# ── enum node (string output for flat attributes) ────────────────────────────
+
+
+def test_enum_node_ordered_cases_and_exposed_attribute():
+    cfg = _cfg(
+        output_type="enum",
+        sources=(_src("open_a", "open_contact"), _src("tilt_a", "tilt_contact")),
+        derived_values=(
+            CB.DerivedValue(
+                name="window_a",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when='${open_a} == null or ${tilt_a} == null', output="stale"),
+                    CB.DerivedCase(when='${open_a} == "on"', output="open"),
+                    CB.DerivedCase(when='${tilt_a} == "on"', output="tilted"),
+                ),
+                default="closed",
+                expose=True,
+            ),
+        ),
+        default_output="${window_a}",
+    )
+
+    assert CB.evaluate_combined(cfg, {"open_a": _r("on"), "tilt_a": _r("on")}).state == "open"
+    assert CB.evaluate_combined(cfg, {"open_a": _r("off"), "tilt_a": _r("on")}).state == "tilted"
+    stale = CB.evaluate_combined(cfg, {"open_a": _r(None, available=False), "tilt_a": _r("off")})
+    assert stale.state == "stale"
+    assert CB.exposed_derived_attributes(cfg, stale) == {"window_a": "stale"}
 
 
 # ── health node ──────────────────────────────────────────────────────────────
@@ -195,6 +232,24 @@ def test_validate_rejects_unknown_ref_and_parse():
     assert any("Parse" in e for e in errs)
 
 
+def test_validate_enum_cases():
+    unknown = _cfg(
+        sources=(_src("a"),),
+        derived_values=(CB.DerivedValue(
+            name="mode",
+            kind="enum",
+            cases=(CB.DerivedCase(when="${nope}", output="bad"),),
+        ),),
+    )
+    empty = _cfg(
+        sources=(_src("a"),),
+        derived_values=(CB.DerivedValue(name="mode", kind="enum"),),
+    )
+
+    assert any("nope" in e for e in CB.validate_combined_v1(unknown))
+    assert any("enum braucht cases" in e for e in CB.validate_combined_v1(empty))
+
+
 def test_validate_rejects_time_latch():
     cfg = _cfg(
         sources=(_src("a"),),
@@ -258,6 +313,7 @@ def test_parse_derived_values_and_fail_safe():
         "sources": [{"key": "a", "role": "custom", "entity": "binary_sensor.a"}],
         "derived_values": [
             {"name": "g", "kind": "gate", "expr": "any([${a}])"},
+            {"name": "e", "kind": "enum", "cases": [{"when": '${a} == "on"', "output": "active"}], "default": "idle"},
             {"name": "l", "kind": "latch", "set": "${a}", "reset": "not(${a})", "fail_safe": "off", "expose": True},
             {"name": "bad", "kind": "nope"},  # ungültig → übersprungen
         ],
@@ -266,8 +322,11 @@ def test_parse_derived_values_and_fail_safe():
     }
     cfg = CB.parse_combined("x", raw)
     assert cfg.fail_safe == "hold_last"
-    assert len(cfg.derived_values) == 2
+    assert len(cfg.derived_values) == 3
     assert cfg.derived_values[0].kind == "gate"
-    assert cfg.derived_values[1].set_expr == "${a}"
-    assert cfg.derived_values[1].expose is True
+    assert cfg.derived_values[1].kind == "enum"
+    assert cfg.derived_values[1].cases[0].output == "active"
+    assert cfg.derived_values[1].default == "idle"
+    assert cfg.derived_values[2].set_expr == "${a}"
+    assert cfg.derived_values[2].expose is True
     assert cfg.exposed_attributes == ("g",)

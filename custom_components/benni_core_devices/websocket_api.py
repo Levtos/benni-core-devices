@@ -231,11 +231,12 @@ def _catalog() -> dict[str, Any]:
                 "nodes": [
                     {"kind": "expr", "desc": "Zahl aus Formel", "example": {"name": "dew", "kind": "expr", "expr": "round(${t} - (100 - ${rh})/5, 1)"}},
                     {"kind": "gate", "desc": "Boolean aus Logik", "example": {"name": "unsafe", "kind": "gate", "expr": "any([${any_open}, ${any_tilt}])"}},
+                    {"kind": "enum", "desc": "String/Enum aus geordneten Fällen", "example": {"name": "room", "kind": "enum", "cases": [{"when": "${open_a} == \"on\"", "output": "open"}], "default": "closed"}},
                     {"kind": "health", "desc": "ok|degraded|problem aus Atomic-Quellen", "example": {"name": "h", "kind": "health", "atomics": ["src_a", "src_b"]}},
                     {"kind": "latch", "desc": "Schmitt-Latch (set/reset, hält dazwischen)", "example": {"name": "dark", "kind": "latch", "set": "${lux} < 50", "reset": "${lux} >= 100", "fail_safe": "off"}},
                     {"kind": "previous", "desc": "eigener letzter Output via ${self}", "example": {"name": "prev", "kind": "previous"}},
                 ],
-                "note": "derived_values[] werden vor den first-match rules ausgewertet; rules/output dürfen ${derived} und ${self} referenzieren. Output kann '${name}' sein. Setze expose:true am Knoten oder top-level exposed_attributes:[name], um ausgewählte Knoten als flache Sensor-Attribute zu veröffentlichen. since/Timer = v1.1 (abgelehnt).",
+                "note": "derived_values[] werden vor den first-match rules ausgewertet; rules/output dürfen ${derived} und ${self} referenzieren. Output kann '${name}' sein. Setze expose:true am Knoten oder top-level exposed_attributes:[name], um ausgewählte Knoten als flache Sensor-Attribute zu veröffentlichen. enum.cases sind first-match-wins. since/Timer = v1.1 (abgelehnt).",
             },
         },
         "defaults": {

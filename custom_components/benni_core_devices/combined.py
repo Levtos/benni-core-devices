@@ -45,10 +45,11 @@ _TRUTHY = frozenset({"on", "true", "yes", "1", "open", "home", "playing", "activ
 # v1.0 Node-Arten in derived_values[].
 NODE_EXPR = "expr"
 NODE_GATE = "gate"
+NODE_ENUM = "enum"
 NODE_HEALTH = "health"
 NODE_LATCH = "latch"
 NODE_PREVIOUS = "previous"
-NODE_KINDS = (NODE_EXPR, NODE_GATE, NODE_HEALTH, NODE_LATCH, NODE_PREVIOUS)
+NODE_KINDS = (NODE_EXPR, NODE_GATE, NODE_ENUM, NODE_HEALTH, NODE_LATCH, NODE_PREVIOUS)
 SELF_REF = "self"
 
 
@@ -102,12 +103,22 @@ class DerivedSensor:
 
 
 @dataclass(frozen=True)
+class DerivedCase:
+    """Geordneter Fall für enum-Derived-Werte."""
+
+    when: str
+    output: Any
+
+
+@dataclass(frozen=True)
 class DerivedValue:
-    """Benannter Zwischenwert (v1.0): expr | gate | health | latch | previous."""
+    """Benannter Zwischenwert (v1.0): expr | gate | enum | health | latch | previous."""
 
     name: str
     kind: str
     expr: str | None = None          # expr/gate
+    cases: tuple[DerivedCase, ...] = ()  # enum
+    default: Any = None              # enum
     set_expr: str | None = None      # latch
     reset_expr: str | None = None    # latch
     atomics: tuple[str, ...] = ()    # health: konsumierte source-keys
@@ -305,6 +316,11 @@ def _node_dep_refs(dv: DerivedValue) -> set[str]:
                 out |= refs(parse(e))
             except ExprError:
                 pass
+    for case in dv.cases:
+        try:
+            out |= refs(parse(case.when))
+        except ExprError:
+            pass
     out |= set(dv.atomics)
     return out
 
@@ -356,6 +372,17 @@ def _eval_node(
         except ExprError:
             v = None
         return v if v is not None else _failsafe_value(NODE_GATE, fail_safe, prev)
+    if dv.kind == NODE_ENUM:
+        for case in dv.cases:
+            try:
+                matched = as_bool(eval_expr(case.when, env))
+            except ExprError:
+                matched = None
+            if matched:
+                return _maybe_ref(case.output, env)
+        if dv.default is not None:
+            return _maybe_ref(dv.default, env)
+        return _failsafe_value(NODE_ENUM, fail_safe, prev)
     if dv.kind == NODE_HEALTH:
         worst = "ok"
         for key in dv.atomics:
@@ -516,6 +543,11 @@ def validate_combined_v1(config: CombinedConfig) -> list[str]:
             continue
         if dv.kind in (NODE_EXPR, NODE_GATE):
             check_expr(dv.name, dv.expr)
+        elif dv.kind == NODE_ENUM:
+            if not dv.cases and dv.default is None:
+                errors.append(f"{dv.name}: enum braucht cases[] oder default")
+            for index, case in enumerate(dv.cases):
+                check_expr(f"{dv.name}.cases[{index}].when", case.when)
         elif dv.kind == NODE_LATCH:
             check_expr(f"{dv.name}.set", dv.set_expr, is_latch=True)
             check_expr(f"{dv.name}.reset", dv.reset_expr, is_latch=True)
@@ -680,11 +712,26 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
         if not name or kind not in NODE_KINDS:
             continue
         atomics = item.get("atomics") or []
+        cases: list[DerivedCase] = []
+        for case in item.get("cases") or []:
+            if not isinstance(case, dict):
+                continue
+            when = str(case.get("when") or "").strip()
+            if not when:
+                continue
+            cases.append(
+                DerivedCase(
+                    when=when,
+                    output=case.get("output", case.get("value")),
+                )
+            )
         derived_values.append(
             DerivedValue(
                 name=name,
                 kind=kind,
                 expr=(str(item["expr"]) if item.get("expr") is not None else None),
+                cases=tuple(cases),
+                default=item.get("default"),
                 set_expr=(str(item["set"]) if item.get("set") is not None else None),
                 reset_expr=(str(item["reset"]) if item.get("reset") is not None else None),
                 atomics=tuple(str(a) for a in atomics if a),

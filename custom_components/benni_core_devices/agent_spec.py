@@ -230,6 +230,7 @@ Named intermediate values, evaluated before the rules; rules/output may referenc
 - `expr` (number): formula over `${{refs}}`, ops `+ - * /` `== != < <= > >=` `and or not`,
   funcs `min,max,abs,round(x[,n]),clamp(x,lo,hi)`. None-propagating (unavailable → fail_safe).
 - `gate` (bool): same parser; `any([...])`/`all([...])`/`not(x)`.
+- `enum` (string): ordered `cases: [{{when, output}}]`, first true wins, else `default`.
 - `health`: `atomics: [src_key, ...]` → `ok|degraded|problem`.
 - `latch`: `set:` / `reset:` gate-expressions (Schmitt hysteresis); holds between; `fail_safe`.
 - `previous`: expose `${{self}}`.
@@ -240,6 +241,7 @@ Default is internal-only.
 ```yaml
   derived_values:
     - {{ name: any_open, kind: gate, expr: "any([${{open_a}}, ${{open_b}}])", expose: true }}
+    - {{ name: room, kind: enum, cases: [{{ when: '${{open_a}} == "on"', output: open }}], default: closed, expose: true }}
     - {{ name: dew, kind: expr, expr: "round(${{t}} - (100 - ${{rh}})/5, 1)" }}
     - {{ name: dark, kind: latch, set: "${{lux}} < 50", reset: "${{lux}} >= 100", fail_safe: off }}
   exposed_attributes: [dew]
@@ -301,6 +303,30 @@ def build_json_schema() -> dict[str, Any]:
             "reason": {"type": "string"},
         },
     }
+    derived_case = {
+        "type": "object",
+        "required": ["when", "output"],
+        "properties": {
+            "when": {"type": "string"},
+            "output": {},
+        },
+    }
+    derived_value = {
+        "type": "object",
+        "required": ["name", "kind"],
+        "properties": {
+            "name": {"type": "string"},
+            "kind": {"enum": ["expr", "gate", "enum", "health", "latch", "previous"]},
+            "expr": {"type": "string"},
+            "cases": {"type": "array", "items": {"$ref": "#/$defs/derived_case"}},
+            "default": {},
+            "set": {"type": "string"},
+            "reset": {"type": "string"},
+            "atomics": {"type": "array", "items": {"type": "string"}},
+            "fail_safe": {"enum": list(FAIL_SAFE_CHOICES)},
+            "expose": {"type": "boolean"},
+        },
+    }
     combined_config = {
         "type": "object",
         "properties": {
@@ -311,6 +337,8 @@ def build_json_schema() -> dict[str, Any]:
             "default_reason": {"type": "string"},
             "code_legend": {"type": "object"},
             "derived": {"type": "array"},
+            "derived_values": {"type": "array", "items": {"$ref": "#/$defs/derived_value"}},
+            "exposed_attributes": {"type": "array", "items": {"type": "string"}},
         },
     }
     return {
@@ -324,6 +352,8 @@ def build_json_schema() -> dict[str, Any]:
             "binding": binding,
             "device": device,
             "rule": rule,
+            "derived_case": derived_case,
+            "derived_value": derived_value,
             "combined_config": combined_config,
         },
     }

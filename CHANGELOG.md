@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.9 - FLEET-93: Enum Derived Attributes
+
+- Combined `derived_values` support a new `enum` node with ordered `cases` and `default` for string attributes such as room/window opening states.
+- The expression engine can now compare refs to `null`, enabling explicit stale-source detection without weakening existing None propagation.
+- Agent briefing, schema, WebSocket catalog, and tests document the new enum-derived contract.
+
 ## 0.4.8 — FLEET-89: Master-Fusion Attribute
 
 - Combined `derived_values` can now be explicitly exposed as flat top-level sensor attributes via per-node `expose: true` or top-level `exposed_attributes`.

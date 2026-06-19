@@ -132,6 +132,11 @@ class BcdApp extends HTMLElement {
       } else {
         const devices = status.devices || [];
         const combineds = status.combineds || [];
+        const masters = combineds.filter((c) => {
+          const conf = c.config || {};
+          return (conf.exposed_attributes || []).length > 0
+            || (conf.derived_values || []).some((d) => d && d.expose);
+        });
         const missing = devices.reduce(
           (n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
         const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;
@@ -142,6 +147,7 @@ class BcdApp extends HTMLElement {
           chip("info", `v${version}`),
           chip("accent", `Route: ${status.profile_label || status.profile || "?"}`),
           chip(devices.length ? "info" : "warn", `Devices ${devices.length}`),
+          masters.length ? chip("accent", `Master ${masters.length}`) : "",
           chip("info", `Combined ${combineds.length}`),
           missing ? chip("warn", `Missing ${missing}`) : "",
           degraded ? chip("warn", `Degraded ${degraded}`) : "",

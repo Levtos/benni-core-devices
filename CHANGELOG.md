@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.10 - FLEET-93: Master UX
+
+- Diagnose distinguishes Master/Fusion entries from regular Combineds with a dedicated filter, stats count, row type, and detail badge.
+- Master detail cards show exposed flat attributes directly.
+- Header chips, Combined Builder edit/preview, and Import dry-run preview mark Master configs consistently.
+
 ## 0.4.9 - FLEET-93: Enum Derived Attributes
 
 - Combined `derived_values` support a new `enum` node with ordered `cases` and `default` for string attributes such as room/window opening states.

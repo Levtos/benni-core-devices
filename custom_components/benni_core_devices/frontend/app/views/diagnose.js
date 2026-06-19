@@ -7,6 +7,7 @@ import { chip, esc, qualityKind } from "../styles.js";
 const TYPE_FILTERS = [
   ["all", "Alle"],
   ["device", "Atomics"],
+  ["master", "Master"],
   ["combined", "Combineds"],
 ];
 
@@ -63,6 +64,13 @@ function categorize(name, type) {
   return "sonstige";
 }
 
+function isMasterCombined(c) {
+  const conf = c.config || {};
+  const exposed = conf.exposed_attributes || [];
+  const derivedValues = conf.derived_values || [];
+  return exposed.length > 0 || derivedValues.some((d) => d && d.expose);
+}
+
 function rows(status) {
   const out = [];
   for (const d of status.devices || []) {
@@ -90,12 +98,13 @@ function rows(status) {
   }
   for (const c of status.combineds || []) {
     const a = c.attrs || {};
+    const master = isMasterCombined(c);
     const severity = a.degraded ? "warn" : (c.state == null ? "err" : "ok");
-    const cat = categorize(c.display_name || c.slug, `combined ${c.output_type || ""}`);
+    const cat = categorize(c.display_name || c.slug, `${master ? "master fusion" : "combined"} ${c.output_type || ""}`);
     const row = {
-      kind: "combined", key: `combined:${c.slug}`, slug: c.slug,
+      kind: master ? "master" : "combined", key: `combined:${c.slug}`, slug: c.slug,
       name: c.display_name || c.slug,
-      type: `combined/${c.output_type || "enum"}`,
+      type: `${master ? "master" : "combined"}/${c.output_type || "enum"}`,
       state: c.state,
       available: a.degraded ? "degraded" : "ok",
       missing: (a.missing_sources || []).length,
@@ -106,6 +115,7 @@ function rows(status) {
       cat, catLabel: CAT_LABEL[cat],
       sources: a.source_entities || {},
       entityId: c.entity_id,
+      master,
       data: c,
     };
     row.haystack = buildHaystack(row);
@@ -210,12 +220,22 @@ function detailCard(row) {
     .map(([code, label]) => `<div class="kv"><span class="k mono">${esc(code)}</span><span class="v">${esc(label)}</span></div>`).join("");
   const derived = (d.derived || []).map((x) =>
     `<div class="kv"><span class="k">${esc(x.name)}</span><span class="v">${chip(x.state ? "accent" : "info", x.state ? "on" : "off")}</span></div>`).join("");
+  const conf = d.config || {};
+  const exposedNames = conf.exposed_attributes || [];
+  const exposedRows = exposedNames.map((name) => (
+    `<div class="kv"><span class="k">${esc(name)}</span><span class="v">${chip("accent", esc(a[name] ?? "—"))}</span></div>`
+  )).join("");
+  const typeChip = row.master
+    ? `${chip("accent", "Master")} ${chip(row.severity, esc(d.output_type))}`
+    : chip(row.severity, esc(d.output_type));
   return `
     <div class="card">
-      <div class="section-head"><h2>${esc(row.name)}</h2>${chip(row.severity, esc(d.output_type))}</div>
+      <div class="section-head"><h2>${esc(row.name)}</h2>${typeChip}</div>
       <div class="kv"><span class="k">Sensor</span><span class="v mono">${esc(d.entity_id)}</span></div>
+      <div class="kv"><span class="k">Typ</span><span class="v">${esc(row.master ? "Master/Fusion" : "Combined")}</span></div>
       <div class="kv"><span class="k">Output</span><span class="v">${esc(d.state)}</span></div>
       <div class="kv"><span class="k">Reason</span><span class="v">${esc(a.reason)}</span></div>
+      ${exposedRows ? `<h2 style="margin-top:16px">Master Attribute</h2>${exposedRows}` : ""}
       <h2 style="margin-top:16px">Quellen</h2>
       ${srcRows || `<div class="muted">Keine Quellen.</div>`}
       ${legend ? `<h2 style="margin-top:16px">Code-Legende</h2>${legend}` : ""}
@@ -265,6 +285,7 @@ export function render(root, ctx) {
   }
   const devices = status.devices || [];
   const combineds = status.combineds || [];
+  const masters = combineds.filter(isMasterCombined);
 
   // Empty-State: freundlicher Einstieg statt nackter Nullen.
   if (!devices.length && !combineds.length) {
@@ -331,6 +352,7 @@ export function render(root, ctx) {
   root.innerHTML = `
     <div class="stats">
       <div class="stat accent"><div class="n">${devices.length}</div><div class="l">Devices</div></div>
+      <div class="stat accent"><div class="n">${masters.length}</div><div class="l">Master</div></div>
       <div class="stat info"><div class="n">${combineds.length}</div><div class="l">Combineds</div></div>
       <div class="stat ${missing ? "warn" : "ok"}"><div class="n">${missing}</div><div class="l">Missing Required</div></div>
       <div class="stat ${degraded ? "warn" : "ok"}"><div class="n">${degraded}</div><div class="l">Degraded</div></div>

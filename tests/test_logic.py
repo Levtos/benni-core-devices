@@ -605,6 +605,50 @@ def test_classify_source_detects_own_entities():
     assert DT.classify_source_entity("sensor.benni_device_tv") is None  # ohne Präfixe
 
 
+def test_classify_source_prefers_published_registry_exact_match():
+    import bcd_device_types as DT
+
+    own = ("benni_device_", "benni_combined_")
+    published = {
+        "sensor.benni_device_tv",
+        "binary_sensor.benni_combined_opening_blocked",
+        "binary_sensor.legacy_gate",
+    }
+
+    assert (
+        DT.classify_source_entity(
+            "sensor.benni_device_tv",
+            own_prefixes=own,
+            published_outputs=published,
+        )
+        == "published"
+    )
+    assert (
+        DT.classify_source_entity(
+            "binary_sensor.benni_combined_opening_blocked",
+            own_prefixes=own,
+            published_outputs=published,
+        )
+        == "published"
+    )
+    assert (
+        DT.classify_source_entity(
+            "binary_sensor.legacy_gate",
+            own_prefixes=own,
+            published_outputs=published,
+        )
+        == "published"
+    )
+    assert (
+        DT.classify_source_entity(
+            "sensor.benni_device_missing",
+            own_prefixes=own,
+            published_outputs=published,
+        )
+        == "unpublished"
+    )
+
+
 def test_roles_present_in_catalog():
     import bcd_device_types as DT
 

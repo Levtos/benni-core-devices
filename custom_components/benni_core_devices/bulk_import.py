@@ -14,6 +14,7 @@ from .const import (
     CONF_CONTROLS,
     CONF_DEVICES,
     CONF_DISPLAY_NAME,
+    CONF_EXPOSE_SECONDARY_SENSORS,
     CONF_GROUP_MEMBERS,
     CONF_LIGHT_GROUPS,
     CONF_METADATA_SOURCES,
@@ -69,11 +70,17 @@ def conf_source_entities(conf: dict[str, Any]) -> list[str]:
     return out
 
 
-def source_warnings(conf: dict[str, Any], profile: str) -> list[str]:
+def source_warnings(
+    conf: dict[str, Any],
+    profile: str,
+    published_outputs: set[str] | frozenset[str] | None = None,
+) -> list[str]:
     own = own_prefixes(profile)
     out: list[str] = []
     for eid in conf_source_entities(conf):
-        category = classify_source_entity(eid, own_prefixes=own)
+        category = classify_source_entity(
+            eid, own_prefixes=own, published_outputs=published_outputs
+        )
         if category:
             out.append(source_warning_text(category, eid))
     return out
@@ -81,6 +88,81 @@ def source_warnings(conf: dict[str, Any], profile: str) -> list[str]:
 
 def device_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{device_object_id_prefix(profile)}{slug}"
+
+
+def combined_sensor_entity_id(profile: str, slug: str) -> str:
+    return f"sensor.{combined_object_id_prefix(profile)}{slug}"
+
+
+def group_sensor_entity_id(profile: str, slug: str) -> str:
+    return f"sensor.{group_object_id_prefix(profile)}{slug}"
+
+
+def _has_source_role(conf: dict[str, Any], role: str) -> bool:
+    return any(
+        isinstance(b, dict) and b.get("role") == role and b.get("entity")
+        for b in conf.get(CONF_SOURCES, []) or []
+    )
+
+
+def _published_for_device(profile: str, slug: str, conf: dict[str, Any]) -> set[str]:
+    prefix = device_object_id_prefix(profile)
+    out = {device_sensor_entity_id(profile, slug)}
+    if conf.get(CONF_EXPOSE_SECONDARY_SENSORS):
+        out.add(f"binary_sensor.{prefix}{slug}_powered")
+        out.add(f"binary_sensor.{prefix}{slug}_available")
+        out.add(f"sensor.{prefix}{slug}_power_state")
+        if _has_source_role(conf, "power_meter"):
+            out.add(f"sensor.{prefix}{slug}_watt")
+    return out
+
+
+def _published_for_combined(profile: str, slug: str, conf: dict[str, Any]) -> set[str]:
+    prefix = combined_object_id_prefix(profile)
+    out = {combined_sensor_entity_id(profile, slug)}
+    cfg = parse_combined(slug, conf)
+    if cfg:
+        out.update(f"binary_sensor.{prefix}{slug}_{d.slug}" for d in cfg.derived)
+    return out
+
+
+def published_output_entity_ids(
+    profile: str,
+    devices: dict[str, dict[str, Any]] | None = None,
+    combineds: dict[str, dict[str, Any]] | None = None,
+    groups: dict[str, dict[str, Any]] | None = None,
+) -> set[str]:
+    out: set[str] = set()
+    for slug, conf in (devices or {}).items():
+        if isinstance(conf, dict):
+            out.update(_published_for_device(profile, str(slug), conf))
+    for slug, conf in (combineds or {}).items():
+        if isinstance(conf, dict):
+            out.update(_published_for_combined(profile, str(slug), conf))
+    for slug, conf in (groups or {}).items():
+        if isinstance(conf, dict):
+            out.add(group_sensor_entity_id(profile, str(slug)))
+    return out
+
+
+def import_start_published_outputs(
+    current_options: dict[str, Any],
+    valid: list[dict[str, Any]],
+    imported_groups: dict[str, Any],
+    profile: str,
+    replace: bool,
+) -> set[str]:
+    devices = {} if replace else devices_from_options(current_options)
+    for item in valid:
+        slug = str(item.get(CONF_SLUG))
+        devices[slug] = {k: v for k, v in item.items() if k != CONF_SLUG}
+    groups = (
+        dict(imported_groups)
+        if replace
+        else {**groups_from_options(current_options), **imported_groups}
+    )
+    combineds = {} if replace else combineds_from_options(current_options)
+    return published_output_entity_ids(profile, devices, combineds, groups)
 
 
 def normalize_combineds(raw: Any) -> dict[str, dict[str, Any]]:
@@ -145,7 +227,11 @@ def replace_from_payload(raw: str) -> bool:
     return replace
 
 
-def import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, Any]]:
+def import_report(
+    valid: list[dict[str, Any]],
+    profile: str,
+    published_outputs: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
     own = own_prefixes(profile)
     report: list[dict[str, Any]] = []
     for d in valid:
@@ -154,7 +240,9 @@ def import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, A
         missing = cfg.missing_required() if cfg else ["<invalid>"]
         derived_sources = []
         for eid in conf_source_entities(d):
-            cat = classify_source_entity(eid, own_prefixes=own)
+            cat = classify_source_entity(
+                eid, own_prefixes=own, published_outputs=published_outputs
+            )
             if cat:
                 derived_sources.append(source_warning_text(cat, eid))
         report.append({
@@ -168,27 +256,58 @@ def import_report(valid: list[dict[str, Any]], profile: str) -> list[dict[str, A
         })
     return report
 
-
-def combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list[dict[str, Any]]:
+def combined_report(
+    combineds: dict[str, dict[str, Any]],
+    profile: str,
+    published_outputs: set[str] | frozenset[str] | None = None,
+) -> list[dict[str, Any]]:
+    own = own_prefixes(profile)
+    published = set(published_outputs or set())
     rep: list[dict[str, Any]] = []
     for slug, conf in combineds.items():
         cfg = parse_combined(slug, conf)
         n = len(cfg.sources) if cfg else 0
-        # Combineds may read Atomics/Combineds; validation only blocks invalid config.
         validation = validate_combined_v1(cfg) if cfg else ["ungültige Config"]
+        derived_sources: list[str] = []
+        source_blocks: list[str] = []
+        accepted_sources: list[str] = []
+        if cfg:
+            for src in cfg.sources:
+                if not src.entity:
+                    continue
+                cat = classify_source_entity(
+                    src.entity, own_prefixes=own, published_outputs=published
+                )
+                if not cat:
+                    continue
+                if cat == "published":
+                    accepted_sources.append(
+                        f"{src.entity}: publizierter Core-Devices-Output als Fusion-Quelle akzeptiert"
+                    )
+                else:
+                    msg = source_warning_text(cat, src.entity)
+                    reason = (
+                        f"forward reference auf noch-nicht-publizierten Output: {src.entity}"
+                        if cat == "unpublished" else msg
+                    )
+                    derived_sources.append(reason)
+                    source_blocks.append(reason)
         rep.append({
             "slug": slug,
             "output_type": cfg.output_type if cfg else "?",
             "sources": n,
             "derived_values": len(cfg.derived_values) if cfg else 0,
             "exposed_attributes": list(exposed_derived_names(cfg)) if cfg else [],
-            "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
-            "derived_sources": [],
+            "entity_id": combined_sensor_entity_id(profile, slug),
+            "derived_sources": derived_sources,
+            "source_blocks": source_blocks,
+            "accepted_sources": accepted_sources,
             "validation": validation,
-            "accepted": cfg is not None and not validation,
+            "accepted": cfg is not None and not validation and not source_blocks,
         })
+        if isinstance(conf, dict):
+            published.update(_published_for_combined(profile, str(slug), conf))
     return rep
-
 
 def apply_bulk(
     current_options: dict[str, Any],

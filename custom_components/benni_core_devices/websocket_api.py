@@ -67,7 +67,9 @@ from .bulk_import import (
     export_yaml_from_options,
     groups_from_options,
     import_report,
+    import_start_published_outputs,
     parse_bulk_payload,
+    published_output_entity_ids,
     source_warnings,
 )
 from .device_types import (
@@ -110,8 +112,22 @@ def _json_safe(value: Any) -> Any:
     return value
 
 
-def _source_warnings(conf: dict[str, Any], profile: str) -> list[str]:
-    return source_warnings(conf, profile)
+def _published_outputs(entry: ConfigEntry) -> set[str]:
+    profile = entry_profile(entry)
+    return published_output_entity_ids(
+        profile,
+        _devices(entry),
+        _combineds(entry),
+        _groups(entry),
+    )
+
+
+def _source_warnings(
+    conf: dict[str, Any],
+    profile: str,
+    published_outputs: set[str] | frozenset[str] | None = None,
+) -> list[str]:
+    return source_warnings(conf, profile, published_outputs)
 
 
 def _device_sensor_entity_id(profile: str, slug: str) -> str:
@@ -134,6 +150,7 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     profile = entry_profile(entry)
     coord_by_slug = {c.slug: c for c in all_coordinators(hass)}
     consumed_by = _consumed_by_index(hass, entry)
+    published_outputs = _published_outputs(entry)
 
     devices = []
     for slug, conf in _devices(entry).items():
@@ -149,7 +166,7 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
             "entity_id": sensor_id,
             "state": result.state if result else None,
             "attrs": attrs,
-            "warnings": _source_warnings(conf, profile),
+            "warnings": _source_warnings(conf, profile, published_outputs),
             "consumed_by": consumed_by.get(sensor_id, []),
         })
 
@@ -319,8 +336,11 @@ async def run_bulk_import(
     """
     valid, imported_groups, imported_combineds = parse_bulk_payload(payload)
     profile = entry_profile(entry)
-    report = import_report(valid, profile)
-    c_report = combined_report(imported_combineds, profile)
+    published_outputs = import_start_published_outputs(
+        entry.options, valid, imported_groups, profile, replace
+    )
+    report = import_report(valid, profile, published_outputs)
+    c_report = combined_report(imported_combineds, profile, published_outputs)
     base = {
         "report": report,
         "combined_report": c_report,
@@ -408,7 +428,10 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             connection.send_error(msg["id"], "invalid_device", str(err))
             return
         devices[slug] = conf
-        warnings = _source_warnings(conf, entry_profile(entry))
+        published_outputs = published_output_entity_ids(
+            entry_profile(entry), devices, _combineds(entry), _groups(entry)
+        )
+        warnings = _source_warnings(conf, entry_profile(entry), published_outputs)
         await _update_options(hass, entry, {**entry.options, CONF_DEVICES: devices})
         connection.send_result(msg["id"], {"slug": slug, "config": conf, "warnings": warnings})
 

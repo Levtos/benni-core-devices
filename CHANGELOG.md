@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.11 - FLEET-92: Published Output Registry
+
+- Source classification can now use an authoritative `published_outputs` registry, so exact Core Devices outputs are accepted while own-prefix misses are treated as unpublished forward refs.
+- Bulk import, status, save warnings, and dry-run reports share the same published-output registry for device, combined, derived binary, and light-group outputs.
+- Combined dry-run reports accept published Fusion/Gate sources separately and block unpublished own outputs via `source_blocks`.
+
 ## 0.4.10 - FLEET-93: Master UX
 
 - Diagnose distinguishes Master/Fusion entries from regular Combineds with a dedicated filter, stats count, row type, and detail badge.

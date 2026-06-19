@@ -120,3 +120,149 @@ def test_file_error_response_keeps_bulk_report_shape():
         "combineds_in": 0,
         "error": "Import file not found",
     }
+
+
+def test_published_output_entity_ids_include_secondary_combined_and_group_outputs():
+    opts = _options()
+    opts["devices"]["living_tv"]["expose_secondary_sensors"] = True
+    opts["combineds"]["opening_state"]["derived"] = [
+        {
+            "slug": "blocks_climate",
+            "name": "Blocks Climate",
+            "target": "__output__",
+            "op": "eq",
+            "value": "2",
+        }
+    ]
+
+    published = BI.published_output_entity_ids(
+        "benni",
+        opts["devices"],
+        opts["combineds"],
+        opts["light_groups"],
+    )
+
+    assert {
+        "sensor.benni_device_living_tv",
+        "binary_sensor.benni_device_living_tv_powered",
+        "binary_sensor.benni_device_living_tv_available",
+        "sensor.benni_device_living_tv_power_state",
+        "sensor.benni_device_living_tv_watt",
+        "sensor.benni_combined_opening_state",
+        "binary_sensor.benni_combined_opening_state_blocks_climate",
+        "sensor.benni_light_group_living_lights",
+    } <= published
+
+
+def test_import_start_published_outputs_merges_imported_devices_and_existing_outputs():
+    current = _options()
+    valid = [
+        {
+            "slug": "desk_plug",
+            "atomic_class": "power_device",
+            "sources": [{"role": "primary_state", "entity": "switch.desk_plug"}],
+        }
+    ]
+    imported_groups = {
+        "desk_lights": {"display_name": "Desk Lights", "members": ["light.desk"]}
+    }
+
+    published = BI.import_start_published_outputs(
+        current, valid, imported_groups, "benni", replace=False
+    )
+
+    assert "sensor.benni_device_desk_plug" in published
+    assert "sensor.benni_combined_opening_state" in published
+    assert "sensor.benni_light_group_desk_lights" in published
+
+
+def test_combined_report_accepts_published_core_sources():
+    report = BI.combined_report(
+        {
+            "climate_gate": {
+                "display_name": "Climate Gate",
+                "sources": [
+                    {
+                        "key": "opening",
+                        "role": "opening_state",
+                        "entity": "sensor.benni_combined_opening_state",
+                    },
+                    {
+                        "key": "blocked",
+                        "role": "gate",
+                        "entity": "binary_sensor.benni_combined_opening_state_blocks_climate",
+                    },
+                ],
+                "default_output": "ok",
+            }
+        },
+        "benni",
+        {
+            "sensor.benni_combined_opening_state",
+            "binary_sensor.benni_combined_opening_state_blocks_climate",
+        },
+    )
+
+    assert report[0]["accepted"] is True
+    assert report[0]["derived_sources"] == []
+    assert report[0]["source_blocks"] == []
+    assert len(report[0]["accepted_sources"]) == 2
+
+
+def test_combined_report_blocks_unpublished_own_outputs_as_forward_refs():
+    report = BI.combined_report(
+        {
+            "climate_gate": {
+                "display_name": "Climate Gate",
+                "sources": [
+                    {
+                        "key": "future",
+                        "role": "gate",
+                        "entity": "sensor.benni_combined_future_gate",
+                    }
+                ],
+                "default_output": "ok",
+            }
+        },
+        "benni",
+        set(),
+    )
+
+    assert report[0]["accepted"] is False
+    assert report[0]["source_blocks"] == [
+        "forward reference auf noch-nicht-publizierten Output: "
+        "sensor.benni_combined_future_gate"
+    ]
+    assert report[0]["derived_sources"] == report[0]["source_blocks"]
+
+
+def test_combined_report_allows_references_to_earlier_imported_combineds_only():
+    report = BI.combined_report(
+        {
+            "first_gate": {
+                "display_name": "First Gate",
+                "default_output": "ok",
+            },
+            "second_gate": {
+                "display_name": "Second Gate",
+                "sources": [
+                    {
+                        "key": "first",
+                        "role": "gate",
+                        "entity": "sensor.benni_combined_first_gate",
+                    }
+                ],
+                "default_output": "ok",
+            },
+        },
+        "benni",
+        set(),
+    )
+
+    assert report[0]["accepted"] is True
+    assert report[1]["accepted"] is True
+    assert report[1]["source_blocks"] == []
+    assert report[1]["accepted_sources"] == [
+        "sensor.benni_combined_first_gate: "
+        "publizierter Core-Devices-Output als Fusion-Quelle akzeptiert"
+    ]

@@ -566,13 +566,20 @@ def unique_slug(base: str, existing: set[str]) -> str:
 BLOCKED_SOURCE_SUFFIXES: Final[tuple[str, ...]] = ("_atomic", "_combined", "_gate")
 
 
-def classify_source_entity(entity_id: Any, *, own_prefixes: tuple[str, ...] = ()) -> str | None:
+def classify_source_entity(
+    entity_id: Any,
+    *,
+    own_prefixes: tuple[str, ...] = (),
+    published_outputs: set[str] | frozenset[str] | None = None,
+) -> str | None:
     if not isinstance(entity_id, str) or "." not in entity_id:
         return None
+    if published_outputs is not None and entity_id in published_outputs:
+        return "published"
     object_id = entity_id.split(".", 1)[1]
     for prefix in own_prefixes:
         if prefix and object_id.startswith(prefix):
-            return "own"
+            return "unpublished" if published_outputs is not None else "own"
     for suffix in BLOCKED_SOURCE_SUFFIXES:
         if object_id.endswith(suffix):
             return suffix.strip("_")
@@ -585,6 +592,8 @@ def source_warning_text(category: str, entity_id: str) -> str:
         "combined": "Combined-/Policy-Quelle",
         "gate": "abgeleitete Gate-Quelle",
         "own": "von dieser Integration selbst erzeugte Quelle",
+        "published": "publizierter Core-Devices-Output",
+        "unpublished": "Core-Devices-Output ohne Registry-Treffer",
     }
     return f"{entity_id}: {labels.get(category, category)} sollte nicht als Raw-Quelle dienen"
 

@@ -78,6 +78,7 @@ async def async_setup_view(hass: HomeAssistant) -> None:
 
     if data.get(DATA_VIEW_PANEL):
         return
+    cache_bust = await hass.async_add_executor_job(_cache_bust)
     async_register_built_in_panel(
         hass,
         component_name="custom",
@@ -88,7 +89,7 @@ async def async_setup_view(hass: HomeAssistant) -> None:
         config={
             "_panel_custom": {
                 "name": PANEL_ELEMENT,
-                "module_url": f"{FRONTEND_ENTRY}?{_cache_bust()}",
+                "module_url": f"{FRONTEND_ENTRY}?{cache_bust}",
             },
         },
     )

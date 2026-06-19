@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.12 - Fix: Panel Cache-Bust Executor
+
+- Move frontend app cache-bust file walking out of the Home Assistant event loop via `hass.async_add_executor_job`.
+- Add a focused view setup regression test with Home Assistant stubs.
+
 ## 0.4.11 - FLEET-92: Published Output Registry
 
 - Source classification can now use an authoritative `published_outputs` registry, so exact Core Devices outputs are accepted while own-prefix misses are treated as unpublished forward refs.

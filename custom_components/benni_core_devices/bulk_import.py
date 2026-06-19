@@ -6,7 +6,7 @@ from typing import Any
 
 import yaml
 
-from .combined import parse_combined, validate_combined_v1
+from .combined import exposed_derived_names, parse_combined, validate_combined_v1
 from .const import (
     ATTR_REPLACE,
     CONF_ATOMIC_CLASS,
@@ -181,6 +181,7 @@ def combined_report(combineds: dict[str, dict[str, Any]], profile: str) -> list[
             "output_type": cfg.output_type if cfg else "?",
             "sources": n,
             "derived_values": len(cfg.derived_values) if cfg else 0,
+            "exposed_attributes": list(exposed_derived_names(cfg)) if cfg else [],
             "entity_id": f"sensor.{combined_object_id_prefix(profile)}{slug}",
             "derived_sources": [],
             "validation": validation,

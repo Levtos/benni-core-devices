@@ -215,6 +215,40 @@ def test_validate_clean_config_no_errors():
     assert CB.validate_combined_v1(cfg) == []
 
 
+def test_exposed_derived_attributes_are_flat_and_explicit():
+    cfg = _cfg(
+        sources=(_src("open_a", "open_contact"), _src("tilt_a", "tilt_contact")),
+        derived_values=(
+            CB.DerivedValue(name="any_open", kind="gate", expr="any([${open_a}])", expose=True),
+            CB.DerivedValue(name="any_tilted", kind="gate", expr="any([${tilt_a}])"),
+        ),
+        exposed_attributes=("any_tilted",),
+    )
+
+    res = CB.evaluate_combined(cfg, {"open_a": _r("off"), "tilt_a": _r("on")})
+
+    assert CB.exposed_derived_names(cfg) == ("any_tilted", "any_open")
+    assert CB.exposed_derived_attributes(cfg, res) == {
+        "any_tilted": True,
+        "any_open": False,
+    }
+
+
+def test_exposed_derived_attributes_validate_names_and_reserved_keys():
+    unknown = _cfg(
+        sources=(_src("a"),),
+        derived_values=(CB.DerivedValue(name="ok", kind="gate", expr="${a}"),),
+        exposed_attributes=("missing",),
+    )
+    reserved = _cfg(
+        sources=(_src("a"),),
+        derived_values=(CB.DerivedValue(name="reason", kind="gate", expr="${a}", expose=True),),
+    )
+
+    assert any("unbekannter derived_values-Knoten 'missing'" in e for e in CB.validate_combined_v1(unknown))
+    assert any("reserviertem Sensor-Attribut" in e for e in CB.validate_combined_v1(reserved))
+
+
 # ── Parsing ──────────────────────────────────────────────────────────────────
 
 
@@ -224,9 +258,10 @@ def test_parse_derived_values_and_fail_safe():
         "sources": [{"key": "a", "role": "custom", "entity": "binary_sensor.a"}],
         "derived_values": [
             {"name": "g", "kind": "gate", "expr": "any([${a}])"},
-            {"name": "l", "kind": "latch", "set": "${a}", "reset": "not(${a})", "fail_safe": "off"},
+            {"name": "l", "kind": "latch", "set": "${a}", "reset": "not(${a})", "fail_safe": "off", "expose": True},
             {"name": "bad", "kind": "nope"},  # ungültig → übersprungen
         ],
+        "exposed_attributes": ["g"],
         "fail_safe": "hold_last",
     }
     cfg = CB.parse_combined("x", raw)
@@ -234,3 +269,5 @@ def test_parse_derived_values_and_fail_safe():
     assert len(cfg.derived_values) == 2
     assert cfg.derived_values[0].kind == "gate"
     assert cfg.derived_values[1].set_expr == "${a}"
+    assert cfg.derived_values[1].expose is True
+    assert cfg.exposed_attributes == ("g",)

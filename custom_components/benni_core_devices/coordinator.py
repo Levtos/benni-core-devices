@@ -471,6 +471,8 @@ class CombinedCoordinator(DataUpdateCoordinator):
 
     @property
     def attributes(self) -> dict[str, Any]:
+        from .combined import exposed_derived_attributes
+
         result = self.data
         if result is None:
             return {}
@@ -488,6 +490,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
             "degraded": result.degraded,
             "degraded_reason": result.degraded_reason,
             "derived": result.derived,
+            **exposed_derived_attributes(self._config, result),
             **self._shadow_compare(result),
         }
 

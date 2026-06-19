@@ -28,6 +28,7 @@ const TEMPLATES = {
         { slug: "any_tilted", name: "Any Tilted", device_class: "opening", target: "tilt_contact", op: "eq", value: "on" },
         { slug: "any_unclear", name: "Any Unclear", device_class: "problem", target: "__output__", op: "eq", value: "9" },
       ],
+      derived_values: [], exposed_attributes: [],
     }),
   },
   any_active: {
@@ -38,7 +39,7 @@ const TEMPLATES = {
       sources: [{ key: "s1", role: "input", entity: "" }],
       rules: [{ source: "s1", op: "eq", value: "on", output: true, reason: "active" }],
       default_output: false, default_reason: "inactive",
-      code_legend: {}, derived: [],
+      code_legend: {}, derived: [], derived_values: [], exposed_attributes: [],
     }),
   },
   safety: {
@@ -51,6 +52,7 @@ const TEMPLATES = {
       default_output: false, default_reason: "safe",
       code_legend: {},
       derived: [{ slug: "unsafe", name: "Unsafe", device_class: "problem", target: "__output__", op: "eq", value: "on" }],
+      derived_values: [], exposed_attributes: [],
     }),
   },
   custom: {
@@ -59,6 +61,7 @@ const TEMPLATES = {
     seed: () => ({
       output_type: "enum", sources: [], rules: [],
       default_output: "", default_reason: "", code_legend: {}, derived: [],
+      derived_values: [], exposed_attributes: [],
     }),
   },
 };
@@ -67,7 +70,8 @@ function blankDraft() {
   return {
     slug: "", display_name: "", output_type: "enum",
     sources: [], rules: [], default_output: "", default_reason: "",
-    code_legend: {}, derived: [], _template: null, _expert: false,
+    code_legend: {}, derived: [], derived_values: [], exposed_attributes: [],
+    _template: null, _expert: false,
   };
 }
 
@@ -89,6 +93,8 @@ function draftFromCombined(c) {
     default_output: conf.default_output ?? "", default_reason: conf.default_reason || "",
     code_legend: conf.code_legend || {},
     derived: (conf.derived || []).map((dd) => ({ slug: dd.slug || "", name: dd.name || "", device_class: dd.device_class || "", target: dd.target || "__output__", op: dd.op || "eq", value: dd.value ?? "" })),
+    derived_values: conf.derived_values || [],
+    exposed_attributes: conf.exposed_attributes || [],
     _template: "edit", _expert: false,
   };
 }
@@ -223,7 +229,8 @@ export function render(root, ctx) {
   const tplLabel = (TEMPLATES[d._template] && TEMPLATES[d._template].label) || (d._template === "edit" ? "Bearbeiten" : d._template);
   const showLegend = d.output_type === "code";
   const sourceKeys = d.sources.map((s) => s.key || s.role).filter(Boolean);
-  const targets = ["__output__", ...sourceKeys, ...roles];
+  const derivedValueNames = (d.derived_values || []).map((x) => x && x.name).filter(Boolean);
+  const targets = ["__output__", ...sourceKeys, ...derivedValueNames, ...roles];
   const canAddSource = d._template === "any_active" || d._template === "custom" || d._expert;
 
   root.innerHTML = `
@@ -361,6 +368,8 @@ export function render(root, ctx) {
         output_type: d.output_type, sources: d.sources, rules: d.rules,
         default_output: d.default_output, default_reason: d.default_reason,
         code_legend: d.code_legend, derived: d.derived,
+        derived_values: d.derived_values || [],
+        exposed_attributes: d.exposed_attributes || [],
       },
     });
     root._cdraft = blankDraft();

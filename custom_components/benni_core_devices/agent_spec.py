@@ -234,11 +234,15 @@ Named intermediate values, evaluated before the rules; rules/output may referenc
 - `latch`: `set:` / `reset:` gate-expressions (Schmitt hysteresis); holds between; `fail_safe`.
 - `previous`: expose `${{self}}`.
 fail_safe per node or config: `off|open|hold_last|unknown`. Timers/`since` = v1.1 (rejected).
+Set `expose: true` on a node or top-level `exposed_attributes: [name, ...]` to publish
+selected derived values as flat top-level attributes on the Combined/Fusion sensor.
+Default is internal-only.
 ```yaml
   derived_values:
-    - {{ name: any_open, kind: gate, expr: "any([${{open_a}}, ${{open_b}}])" }}
+    - {{ name: any_open, kind: gate, expr: "any([${{open_a}}, ${{open_b}}])", expose: true }}
     - {{ name: dew, kind: expr, expr: "round(${{t}} - (100 - ${{rh}})/5, 1)" }}
     - {{ name: dark, kind: latch, set: "${{lux}} < 50", reset: "${{lux}} >= 100", fail_safe: off }}
+  exposed_attributes: [dew]
 ```
 
 ## Current configuration (export — do not duplicate)

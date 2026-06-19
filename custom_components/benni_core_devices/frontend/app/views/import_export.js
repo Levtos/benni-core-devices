@@ -28,10 +28,11 @@ function reportCard(result) {
       ...val.map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
     ].join("");
     const dv = r.derived_values ? ` · ${r.derived_values} derived` : "";
+    const exposed = (r.exposed_attributes || []).length ? ` · attrs: ${(r.exposed_attributes || []).map(esc).join(", ")}` : "";
     return `<tr>
       <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
       <td class="mono">${esc(r.entity_id)}</td>
-      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}</td>
+      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}${exposed}</td>
       <td>${issues || `<span class="muted">—</span>`}</td>
     </tr>`;
   }).join("");

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.8 — FLEET-89: Master-Fusion Attribute
+
+- Combined `derived_values` can now be explicitly exposed as flat top-level sensor attributes via per-node `expose: true` or top-level `exposed_attributes`.
+- Combined sensor attributes keep the existing nested `derived` diagnostics while adding only selected published attributes.
+- Bulk-import dry-run reports exposed attributes; agent/catalog text documents the new contract.
+- Combined Builder preserves `derived_values` and `exposed_attributes` on save so master configs are not accidentally stripped.
 ## 0.4.3 — Diagnose-UX: Atomic/Combined-Filter
 
 - **Diagnose-Ansicht:** Die Problemliste kann jetzt zusätzlich nach

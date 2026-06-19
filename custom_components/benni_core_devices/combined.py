@@ -112,6 +112,7 @@ class DerivedValue:
     reset_expr: str | None = None    # latch
     atomics: tuple[str, ...] = ()    # health: konsumierte source-keys
     fail_safe: str | None = None     # off|open|hold_last|unknown (sonst config-Default)
+    expose: bool = False             # als flaches Top-Level-Attribut veröffentlichen
 
 
 @dataclass(frozen=True)
@@ -129,6 +130,7 @@ class CombinedConfig:
     derived: tuple[DerivedSensor, ...] = ()
     # v1.0:
     derived_values: tuple[DerivedValue, ...] = ()
+    exposed_attributes: tuple[str, ...] = ()
     fail_safe: str = FAIL_SAFE_UNKNOWN
 
 
@@ -274,6 +276,25 @@ def _failsafe_output(mode: str, prev: Any) -> Any:
 
 def _derived_names(config: CombinedConfig) -> set[str]:
     return {d.name for d in config.derived_values}
+
+
+def exposed_derived_names(config: CombinedConfig) -> tuple[str, ...]:
+    """Derived-Knoten, die als flache Sensor-Attribute veröffentlicht werden."""
+    known = _derived_names(config)
+    out: list[str] = []
+    for name in (*config.exposed_attributes, *(d.name for d in config.derived_values if d.expose)):
+        if name in known and name not in out:
+            out.append(name)
+    return tuple(out)
+
+
+def exposed_derived_attributes(config: CombinedConfig, result: CombinedResult) -> dict[str, Any]:
+    """Flache, explizit freigegebene Derived-Attribute für den HA-Sensor."""
+    return {
+        name: result.derived[name]
+        for name in exposed_derived_names(config)
+        if name in result.derived
+    }
 
 
 def _node_dep_refs(dv: DerivedValue) -> set[str]:
@@ -466,6 +487,11 @@ def validate_combined_v1(config: CombinedConfig) -> list[str]:
     names = _derived_names(config)
     source_keys = {s.key for s in config.sources}
     allowed = source_keys | names | {SELF_REF}
+    reserved_attributes = {
+        "slug", "display_name", "output_type", "output", "reason", "code_legend",
+        "source_entities", "source_states", "source_available", "missing_sources",
+        "degraded", "degraded_reason", "derived", "shadow_compare",
+    }
 
     def check_expr(label: str, e: str | None, is_latch: bool = False) -> None:
         if not e:
@@ -497,6 +523,13 @@ def validate_combined_v1(config: CombinedConfig) -> list[str]:
             for a in dv.atomics:
                 if a not in source_keys:
                     errors.append(f"{dv.name}: health-Quelle {a!r} ist keine Source")
+
+    for name in config.exposed_attributes:
+        if name not in names:
+            errors.append(f"exposed_attributes: unbekannter derived_values-Knoten {name!r}")
+    for name in exposed_derived_names(config):
+        if name in reserved_attributes:
+            errors.append(f"{name}: exposed attribute kollidiert mit reserviertem Sensor-Attribut")
 
     # Zyklus-Erkennung
     by_name = {d.name: d for d in config.derived_values}
@@ -656,6 +689,7 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
                 reset_expr=(str(item["reset"]) if item.get("reset") is not None else None),
                 atomics=tuple(str(a) for a in atomics if a),
                 fail_safe=(str(item["fail_safe"]) if item.get("fail_safe") else None),
+                expose=bool(item.get("expose")),
             )
         )
 
@@ -663,6 +697,8 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
     code_legend = dict(legend) if isinstance(legend, dict) else {}
     diagnostics = raw.get("diagnostics") if isinstance(raw.get("diagnostics"), dict) else {}
     fail_safe = str(raw.get("fail_safe") or diagnostics.get("fail_safe") or FAIL_SAFE_UNKNOWN)
+    exposed_raw = raw.get("exposed_attributes") or []
+    exposed_attributes = tuple(str(name) for name in exposed_raw if name) if isinstance(exposed_raw, list) else ()
 
     return CombinedConfig(
         slug=slug,
@@ -677,5 +713,6 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
         code_legend=code_legend,
         derived=tuple(derived),
         derived_values=tuple(derived_values),
+        exposed_attributes=exposed_attributes,
         fail_safe=fail_safe,
     )

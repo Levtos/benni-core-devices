@@ -235,7 +235,7 @@ def _catalog() -> dict[str, Any]:
                     {"kind": "latch", "desc": "Schmitt-Latch (set/reset, hält dazwischen)", "example": {"name": "dark", "kind": "latch", "set": "${lux} < 50", "reset": "${lux} >= 100", "fail_safe": "off"}},
                     {"kind": "previous", "desc": "eigener letzter Output via ${self}", "example": {"name": "prev", "kind": "previous"}},
                 ],
-                "note": "derived_values[] werden vor den first-match rules ausgewertet; rules/output dürfen ${derived} und ${self} referenzieren. Output kann '${name}' sein. since/Timer = v1.1 (abgelehnt).",
+                "note": "derived_values[] werden vor den first-match rules ausgewertet; rules/output dürfen ${derived} und ${self} referenzieren. Output kann '${name}' sein. Setze expose:true am Knoten oder top-level exposed_attributes:[name], um ausgewählte Knoten als flache Sensor-Attribute zu veröffentlichen. since/Timer = v1.1 (abgelehnt).",
             },
         },
         "defaults": {

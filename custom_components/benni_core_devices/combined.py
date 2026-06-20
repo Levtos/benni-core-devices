@@ -95,8 +95,9 @@ class DerivedSensor:
 
     slug: str
     name: str
+    object_id: str | None = None
     device_class: str | None = None
-    # Ziel: ein konkreter source.key, eine Rolle (any-match), oder "__output__".
+    # Ziel: "__output__", ein derived_values-Name, ein source.key oder eine Rolle.
     target: str = "__output__"
     op: str = COMBINED_OP_EQ
     value: str | None = None
@@ -607,12 +608,16 @@ def evaluate_derived(
 
     `target` kann sein:
     - "__output__" — vergleicht gegen den Combined-Output
+    - ein derived_values-Name — vergleicht gegen diesen Zwischenwert
     - ein source.key — vergleicht gegen diese eine Quelle
     - eine Rolle — any-match über alle Quellen dieser Rolle
     """
     if derived.target == "__output__":
         reading = SourceReading(value=result.state, numeric=None, available=True)
         return _match(reading, derived.op, derived.value)
+
+    if derived.target in result.derived:
+        return _match(_wrap(result.derived[derived.target]), derived.op, derived.value)
 
     source_keys = {s.key for s in config.sources}
     if derived.target in source_keys:
@@ -694,6 +699,11 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
             DerivedSensor(
                 slug=dslug,
                 name=str(item.get("name") or dslug),
+                object_id=(
+                    str(item["object_id"]).strip()
+                    if item.get("object_id")
+                    else None
+                ),
                 device_class=(
                     str(item["device_class"]) if item.get("device_class") else None
                 ),

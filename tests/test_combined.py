@@ -161,6 +161,39 @@ def test_derived_against_output():
     assert CB.evaluate_derived(cfg.derived[0], cfg, readings, res) is True
 
 
+def test_derived_binary_can_target_derived_value_node():
+    cfg = CB.CombinedConfig(
+        slug="openings", display_name="Openings",
+        sources=(
+            CB.CombinedSource(key="open", role="open_contact", entity="binary_sensor.open"),
+            CB.CombinedSource(key="tilt", role="tilt_contact", entity="binary_sensor.tilt"),
+        ),
+        derived_values=(
+            CB.DerivedValue(
+                name="any_not_closed",
+                kind="gate",
+                expr='any([${open} == "on", ${tilt} == "on"])',
+            ),
+        ),
+        default_output="closed",
+        derived=(
+            CB.DerivedSensor(
+                slug="any_not_closed_entity",
+                name="Any Not Closed",
+                target="any_not_closed",
+                op=C.COMBINED_OP_EQ,
+                value="on",
+            ),
+        ),
+    )
+
+    readings = {"open": _r("off"), "tilt": _r("on")}
+    res = CB.evaluate_combined(cfg, readings)
+
+    assert res.derived["any_not_closed"] is True
+    assert CB.evaluate_derived(cfg.derived[0], cfg, readings, res) is True
+
+
 # ── Parsing ──────────────────────────────────────────────────────────────────
 
 
@@ -179,7 +212,13 @@ def test_parse_combined_roundtrip():
         ],
         "default_output": 0,
         "code_legend": {"0": "closed"},
-        "derived": [{"slug": "any_open", "target": "open_contact", "op": "eq", "value": "on"}],
+        "derived": [{
+            "slug": "any_open",
+            "object_id": "legacy_any_open",
+            "target": "open_contact",
+            "op": "eq",
+            "value": "on",
+        }],
     }
     cfg = CB.parse_combined("opening_state", raw)
     assert cfg is not None
@@ -188,6 +227,7 @@ def test_parse_combined_roundtrip():
     assert cfg.sources[1].key == "tilt_contact"
     assert len(cfg.rules) == 2  # invalid op skipped
     assert cfg.derived[0].slug == "any_open"
+    assert cfg.derived[0].object_id == "legacy_any_open"
 
 
 def test_parse_combined_garbage_returns_none():

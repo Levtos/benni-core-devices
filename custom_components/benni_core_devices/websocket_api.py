@@ -60,6 +60,7 @@ from .const import (
 from .coordinator import all_coordinators, combined_coordinators_for_entry
 from .bulk_import import (
     apply_bulk,
+    combined_derived_binary_sensor_entity_id,
     combined_report,
     combineds_from_options,
     devices_from_options,
@@ -174,9 +175,10 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
     for slug, coord in combined_coordinators_for_entry(hass, entry).items():
         result = coord.data
         derived = [{
-            "slug": d.slug, "name": d.name, "device_class": d.device_class,
+            "slug": d.slug, "name": d.name, "object_id": d.object_id,
+            "device_class": d.device_class,
             "state": coord.derived_state(d),
-            "entity_id": f"binary_sensor.{combined_object_id_prefix(profile)}{slug}_{d.slug}",
+            "entity_id": combined_derived_binary_sensor_entity_id(profile, slug, d),
         } for d in coord.config.derived]
         combineds.append({
             "slug": slug, "display_name": coord.config.display_name,

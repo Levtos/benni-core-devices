@@ -148,6 +148,7 @@ function sync(root) {
     d.derived = [...root.querySelectorAll("[data-derived]")].map((row) => ({
       slug: row.querySelector('[name="d_slug"]').value.trim(),
       name: row.querySelector('[name="d_name"]').value.trim(),
+      object_id: row.querySelector('[name="d_object_id"]').value.trim(),
       device_class: row.querySelector('[name="d_class"]').value.trim(),
       target: row.querySelector('[name="d_target"]').value,
       op: row.querySelector('[name="d_op"]').value,
@@ -307,9 +308,10 @@ export function render(root, ctx) {
             <div class="disclosure-body">
               <div id="derived">
                 ${d.derived.map((x, i) => `
-                  <div class="rule-row" data-derived="${i}" style="grid-template-columns:1fr 1fr 1fr 1fr .8fr 1fr 30px">
+                  <div class="rule-row" data-derived="${i}" style="grid-template-columns:1fr 1fr 1fr 1fr 1fr .8fr 1fr 30px">
                     <input name="d_slug" value="${esc(x.slug)}" placeholder="slug">
                     <input name="d_name" value="${esc(x.name)}" placeholder="Name">
+                    <input name="d_object_id" value="${esc(x.object_id)}" placeholder="object_id optional">
                     <input name="d_class" value="${esc(x.device_class)}" placeholder="device_class">
                     <select name="d_target">${targets.map((t) => `<option value="${esc(t)}" ${t === x.target ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>
                     <select name="d_op">${opOptions(ops, x.op)}</select>
@@ -356,7 +358,7 @@ export function render(root, ctx) {
   root.querySelectorAll("[data-del-rule]").forEach((b) =>
     b.addEventListener("click", () => { sync(root); d.rules.splice(Number(b.dataset.delRule), 1); ctx.rerender(); }));
   const addDerived = root.querySelector("#addDerived");
-  if (addDerived) addDerived.addEventListener("click", () => { sync(root); d.derived.push({ slug: "", name: "", device_class: "", target: "__output__", op: "eq", value: "" }); ctx.rerender(); });
+  if (addDerived) addDerived.addEventListener("click", () => { sync(root); d.derived.push({ slug: "", name: "", object_id: "", device_class: "", target: "__output__", op: "eq", value: "" }); ctx.rerender(); });
   root.querySelectorAll("[data-del-derived]").forEach((b) =>
     b.addEventListener("click", () => { sync(root); d.derived.splice(Number(b.dataset.delDerived), 1); ctx.rerender(); }));
 

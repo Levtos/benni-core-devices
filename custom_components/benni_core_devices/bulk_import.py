@@ -98,6 +98,12 @@ def group_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{group_object_id_prefix(profile)}{slug}"
 
 
+def combined_derived_binary_sensor_entity_id(profile: str, slug: str, derived: Any) -> str:
+    override = getattr(derived, "object_id", None)
+    object_id = str(override) if override else f"{combined_object_id_prefix(profile)}{slug}_{derived.slug}"
+    return f"binary_sensor.{object_id}"
+
+
 def _has_source_role(conf: dict[str, Any], role: str) -> bool:
     return any(
         isinstance(b, dict) and b.get("role") == role and b.get("entity")
@@ -118,11 +124,13 @@ def _published_for_device(profile: str, slug: str, conf: dict[str, Any]) -> set[
 
 
 def _published_for_combined(profile: str, slug: str, conf: dict[str, Any]) -> set[str]:
-    prefix = combined_object_id_prefix(profile)
     out = {combined_sensor_entity_id(profile, slug)}
     cfg = parse_combined(slug, conf)
     if cfg:
-        out.update(f"binary_sensor.{prefix}{slug}_{d.slug}" for d in cfg.derived)
+        out.update(
+            combined_derived_binary_sensor_entity_id(profile, slug, d)
+            for d in cfg.derived
+        )
     return out
 
 

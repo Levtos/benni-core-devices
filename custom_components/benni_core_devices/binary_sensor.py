@@ -33,6 +33,13 @@ def _object_id(profile: str, slug: str, suffix: str) -> str:
     return f"{device_object_id_prefix(profile)}{slug}_{suffix}"
 
 
+def _combined_derived_object_id(profile: str, combined_slug: str, derived) -> str:
+    override = getattr(derived, "object_id", None)
+    if override:
+        return str(override)
+    return f"{combined_object_id_prefix(profile)}{combined_slug}_{derived.slug}"
+
+
 async def async_get_entities(
     hass: HomeAssistant, entry: ConfigEntry, platform: str
 ) -> list[Entity]:
@@ -152,8 +159,9 @@ class CombinedDerivedBinarySensor(
                 self._attr_device_class = None
         self.entity_id = async_generate_entity_id(
             "binary_sensor.{}",
-            f"{combined_object_id_prefix(coordinator.profile_name)}"
-            f"{coordinator.slug}_{derived.slug}",
+            _combined_derived_object_id(
+                coordinator.profile_name, coordinator.slug, derived
+            ),
             hass=coordinator.hass,
         )
 

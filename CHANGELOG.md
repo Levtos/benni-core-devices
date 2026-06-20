@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.13 - FLEET-91: Promoted Derived Entities
+
+- Allow `derived` binary sensors to target `derived_values` nodes for the rare History/native-HA promotion path.
+- Add optional `object_id` overrides for promoted derived binary sensors while keeping derived values attribute-first by default.
+- Keep status, bulk-import published output detection, agent schema, and Combined Builder aligned with the promoted entity object ID.
+
 ## 0.4.12 - Fix: Panel Cache-Bust Executor
 
 - Move frontend app cache-bust file walking out of the Home Assistant event loop via `hass.async_add_executor_job`.

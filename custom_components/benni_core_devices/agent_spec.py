@@ -221,8 +221,11 @@ fail_safe: {", ".join(f"`{f}`" for f in FAIL_SAFE_CHOICES)}
 
 {_COMBINED_EXAMPLE}
 
-A derived binary sensor's `target` is `__output__`, a source `key`, or a role
-(any-match over sources of that role).
+A derived binary sensor's `target` is `__output__`, a `derived_values` name,
+a source `key`, or a role (any-match over sources of that role). Promoting a
+derived value to its own entity is the exception for History/native-HA use; the
+default is `expose`/`exposed_attributes`. Use optional `object_id` only when a
+specific binary_sensor object id must stay stable.
 
 ### Combined v1 derived_values (optional, additive)
 Named intermediate values, evaluated before the rules; rules/output may reference
@@ -327,6 +330,19 @@ def build_json_schema() -> dict[str, Any]:
             "expose": {"type": "boolean"},
         },
     }
+    derived_sensor = {
+        "type": "object",
+        "required": ["slug"],
+        "properties": {
+            "slug": {"type": "string", "pattern": "^[a-z0-9_]+$"},
+            "name": {"type": "string"},
+            "object_id": {"type": "string"},
+            "device_class": {"type": "string"},
+            "target": {"type": "string"},
+            "op": {"enum": list(COMBINED_OPERATOR_CHOICES)},
+            "value": {"type": "string"},
+        },
+    }
     combined_config = {
         "type": "object",
         "properties": {
@@ -336,7 +352,7 @@ def build_json_schema() -> dict[str, Any]:
             "default_output": {},
             "default_reason": {"type": "string"},
             "code_legend": {"type": "object"},
-            "derived": {"type": "array"},
+            "derived": {"type": "array", "items": {"$ref": "#/$defs/derived_sensor"}},
             "derived_values": {"type": "array", "items": {"$ref": "#/$defs/derived_value"}},
             "exposed_attributes": {"type": "array", "items": {"type": "string"}},
         },
@@ -352,6 +368,7 @@ def build_json_schema() -> dict[str, Any]:
             "binding": binding,
             "device": device,
             "rule": rule,
+            "derived_sensor": derived_sensor,
             "derived_case": derived_case,
             "derived_value": derived_value,
             "combined_config": combined_config,

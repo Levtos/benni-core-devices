@@ -128,6 +128,7 @@ def test_published_output_entity_ids_include_secondary_combined_and_group_output
     opts["combineds"]["opening_state"]["derived"] = [
         {
             "slug": "blocks_climate",
+            "object_id": "legacy_blocks_climate",
             "name": "Blocks Climate",
             "target": "__output__",
             "op": "eq",
@@ -149,7 +150,7 @@ def test_published_output_entity_ids_include_secondary_combined_and_group_output
         "sensor.benni_device_living_tv_power_state",
         "sensor.benni_device_living_tv_watt",
         "sensor.benni_combined_opening_state",
-        "binary_sensor.benni_combined_opening_state_blocks_climate",
+        "binary_sensor.legacy_blocks_climate",
         "sensor.benni_light_group_living_lights",
     } <= published
 

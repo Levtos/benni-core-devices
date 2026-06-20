@@ -859,16 +859,31 @@ def test_assumed_player_state_uses_watt_bucket_granularity():
     assert r.state == "playing"
 
 
-def test_assumed_player_hold_bridges_short_watt_dip():
-    """Kurzer Watt-Dip beim Umschalten → Halte-Fenster hält den TV on."""
+def test_assumed_player_hold_bridges_short_watt_dip_while_player_active():
+    """Kurzer Watt-Dip beim Umschalten → Halte-Fenster hält den TV on,
+    solange die Player-Quelle nicht selbst frisch off meldet."""
     cfg = _config(threshold=50, sticky=60)
-    inp = _media_inputs("off", 0.0, assumed=True)
+    inp = _media_inputs("playing", 0.0, assumed=True)
     persisted = _persisted(
         last_powered=True, last_watt_active=NOW - timedelta(seconds=20)
     )
     r = L.compute_device(cfg, inp, persisted, NOW)
     assert r.powered is True
     assert r.power_source == C.PowerSource.STICKY_HOLD.value
+
+
+def test_assumed_player_off_zero_watt_does_not_sticky_hold():
+    """FLEET-126: TV-Aus darf kein Phantom-on halten, wenn webOS frisch off
+    meldet und der Watt-Meter schon bei 0 W ist."""
+    cfg = _config(threshold=50, sticky=60)
+    inp = _media_inputs("off", 0.0, assumed=True)
+    persisted = _persisted(
+        last_powered=True, last_watt_active=NOW - timedelta(seconds=20)
+    )
+    r = L.compute_device(cfg, inp, persisted, NOW)
+    assert r.powered is False
+    assert r.state == "off"
+    assert r.power_source == C.PowerSource.WATT_PRIMARY.value
 
 
 def test_assumed_player_stale_watt_falls_back_to_player():

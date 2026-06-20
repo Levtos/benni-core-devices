@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.14 - FLEET-126: TV Power-Down Sticky Hold
+
+- Stop watt-primary sticky-hold for assumed-state integrations when the integration source freshly reports `off` and the watt meter is already below the on threshold.
+- Keep sticky-hold for normal watt-primary devices and for assumed-state media devices that still report an active player state during a short watt dip.
+- Add regression coverage so the living TV Atomic no longer holds a phantom `on` after TV/PS5 power-down.
+
 ## 0.4.13 - FLEET-91: Promoted Derived Entities
 
 - Allow `derived` binary sensors to target `derived_values` nodes for the rare History/native-HA promotion path.

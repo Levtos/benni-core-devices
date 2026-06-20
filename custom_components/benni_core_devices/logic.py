@@ -364,7 +364,13 @@ def compute_device(
         else:
             # Halte-Fenster: kurze Null-Watt-Dips (Einweichen/Pause) überbrücken,
             # solange das Gerät zuletzt innerhalb sticky_hold_seconds aktiv war.
+            # Bei assumed_state-Integrationen ist ein frisches "off" plus 0 W
+            # dagegen ein echter Power-Down; sonst hält der TV nach dem Ausgehen
+            # ein Phantom-on und blockiert downstream Entertainment-Idle.
+            allow_hold = not (assumed_unreliable and integration_bool is False)
             held = (
+                allow_hold
+                and
                 persisted.last_powered is True
                 and last_watt_active is not None
                 and (now - last_watt_active).total_seconds() <= config.sticky_hold_seconds

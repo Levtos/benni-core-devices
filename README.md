@@ -347,6 +347,10 @@ The current Einhornzentrale opening/window logic is summarized as the concrete
 reference for this rework in
 [docs/opening-combined-rework.md](docs/opening-combined-rework.md).
 
+The broader FLEET-108 rollout split between device/function masters and later
+domain facades is documented in
+[docs/master-contract-rollout.md](docs/master-contract-rollout.md).
+
 Missing for a good TV atomic:
 
 - raw current/voltage/energy attributes

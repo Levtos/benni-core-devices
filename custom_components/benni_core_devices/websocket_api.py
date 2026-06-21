@@ -27,6 +27,7 @@ from .const import (
     CONF_FAIL_SAFE,
     CONF_GROUP_MEMBERS,
     CONF_LIGHT_GROUPS,
+    CONF_MASTERS,
     CONF_METADATA_SOURCES,
     CONF_PROFILE,
     CONF_SLUG,
@@ -56,8 +57,9 @@ from .const import (
     WS_SET_GROUP,
     combined_object_id_prefix,
     entry_profile,
+    master_object_id_prefix,
 )
-from .coordinator import all_coordinators, combined_coordinators_for_entry
+from .coordinator import all_coordinators, combined_coordinators_for_entry, master_coordinators_for_entry
 from .bulk_import import (
     apply_bulk,
     combined_derived_binary_sensor_entity_id,
@@ -69,6 +71,7 @@ from .bulk_import import (
     groups_from_options,
     import_report,
     import_start_published_outputs,
+    masters_from_options,
     parse_bulk_payload,
     published_output_entity_ids,
     source_warnings,
@@ -98,6 +101,10 @@ def _combineds(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
     return combineds_from_options(entry.options)
 
 
+def _masters(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
+    return masters_from_options(entry.options)
+
+
 async def _update_options(hass: HomeAssistant, entry: ConfigEntry, options: dict[str, Any]) -> None:
     hass.config_entries.async_update_entry(entry, options=options)
     await hass.config_entries.async_reload(entry.entry_id)
@@ -120,6 +127,7 @@ def _published_outputs(entry: ConfigEntry) -> set[str]:
         _devices(entry),
         _combineds(entry),
         _groups(entry),
+        _masters(entry),
     )
 
 
@@ -137,7 +145,10 @@ def _device_sensor_entity_id(profile: str, slug: str) -> str:
 
 def _consumed_by_index(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, list[str]]:
     index: dict[str, list[str]] = {}
-    for coord in combined_coordinators_for_entry(hass, entry).values():
+    for coord in [
+        *combined_coordinators_for_entry(hass, entry).values(),
+        *master_coordinators_for_entry(hass, entry).values(),
+    ]:
         for src in coord.config.sources:
             if src.entity:
                 index.setdefault(src.entity, []).append(coord.slug)
@@ -189,6 +200,24 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
             "attrs": _json_safe(coord.attributes), "derived": derived,
         })
 
+    masters = []
+    for slug, coord in master_coordinators_for_entry(hass, entry).items():
+        result = coord.data
+        derived = [{
+            "slug": d.slug, "name": d.name, "object_id": d.object_id,
+            "device_class": d.device_class,
+            "state": coord.derived_state(d),
+            "entity_id": combined_derived_binary_sensor_entity_id(profile, slug, d, master=True),
+        } for d in coord.config.derived]
+        masters.append({
+            "slug": slug, "display_name": coord.config.display_name,
+            "entity_id": f"sensor.{master_object_id_prefix(profile)}{slug}",
+            "state": result.state if result else None,
+            "output_type": coord.config.output_type,
+            "config": _masters(entry).get(slug, {}),
+            "attrs": _json_safe(coord.attributes), "derived": derived,
+        })
+
     groups = []
     for slug, conf in _groups(entry).items():
         members = [m for m in conf.get(CONF_GROUP_MEMBERS, []) if isinstance(m, str)]
@@ -203,7 +232,7 @@ def _status(hass: HomeAssistant, entry: ConfigEntry) -> dict[str, Any]:
         "profile": entry.data.get(CONF_PROFILE, DEFAULT_PROFILE),
         "profile_label": PROFILE_LABELS.get(entry.data.get(CONF_PROFILE, DEFAULT_PROFILE), profile),
         "entry_id": entry.entry_id,
-        "devices": devices, "combineds": combineds, "groups": groups,
+        "devices": devices, "combineds": combineds, "masters": masters, "groups": groups,
     }
 
 
@@ -336,37 +365,48 @@ async def run_bulk_import(
 
     Raises ValueError/yaml.YAMLError bei ungültigem Payload.
     """
-    valid, imported_groups, imported_combineds = parse_bulk_payload(payload)
+    valid, imported_groups, imported_combineds, imported_masters, removals = parse_bulk_payload(payload)
     profile = entry_profile(entry)
     published_outputs = import_start_published_outputs(
-        entry.options, valid, imported_groups, profile, replace
+        entry.options, valid, imported_groups, imported_masters, profile, replace, removals
     )
     report = import_report(valid, profile, published_outputs)
     c_report = combined_report(imported_combineds, profile, published_outputs)
+    m_report = combined_report(imported_masters, profile, published_outputs, master=True)
     base = {
         "report": report,
         "combined_report": c_report,
+        "master_report": m_report,
         "combineds_in": len(imported_combineds),
+        "masters_in": len(imported_masters),
+        "removed": removals,
     }
     if dry_run:
         return {
             "dry_run": True, "replace": replace,
             "devices": len(valid), "groups": len(imported_groups),
-            "combineds": len(imported_combineds), **base,
+            "combineds": len(imported_combineds), "masters": len(imported_masters), **base,
         }
-    devices, groups, combineds = apply_bulk(
-        entry.options, valid, imported_groups, imported_combineds, replace
+    devices, groups, combineds, masters = apply_bulk(
+        entry.options,
+        valid,
+        imported_groups,
+        imported_combineds,
+        imported_masters,
+        removals,
+        replace,
     )
     await _update_options(hass, entry, {
         **entry.options,
         CONF_DEVICES: devices,
         CONF_LIGHT_GROUPS: groups,
         CONF_COMBINEDS: combineds,
+        CONF_MASTERS: masters,
     })
     return {
         "dry_run": False, "replace": replace,
         "devices": len(devices), "groups": len(groups),
-        "combineds": len(combineds), **base,
+        "combineds": len(combineds), "masters": len(masters), **base,
     }
 
 
@@ -431,7 +471,7 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             return
         devices[slug] = conf
         published_outputs = published_output_entity_ids(
-            entry_profile(entry), devices, _combineds(entry), _groups(entry)
+            entry_profile(entry), devices, _combineds(entry), _groups(entry), _masters(entry)
         )
         warnings = _source_warnings(conf, entry_profile(entry), published_outputs)
         await _update_options(hass, entry, {**entry.options, CONF_DEVICES: devices})

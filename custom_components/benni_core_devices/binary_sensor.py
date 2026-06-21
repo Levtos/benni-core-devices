@@ -19,12 +19,13 @@ from homeassistant.helpers.entity import Entity, async_generate_entity_id
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import combined_object_id_prefix, device_object_id_prefix, unique_id
+from .const import combined_object_id_prefix, device_object_id_prefix, master_object_id_prefix, unique_id
 from .coordinator import (
     CombinedCoordinator,
     DeviceCoordinator,
     combined_coordinators_for_entry,
     coordinators_for_entry,
+    master_coordinators_for_entry,
 )
 from .logic import DeviceResult
 
@@ -40,6 +41,13 @@ def _combined_derived_object_id(profile: str, combined_slug: str, derived) -> st
     return f"{combined_object_id_prefix(profile)}{combined_slug}_{derived.slug}"
 
 
+def _master_derived_object_id(profile: str, master_slug: str, derived) -> str:
+    override = getattr(derived, "object_id", None)
+    if override:
+        return str(override)
+    return f"{master_object_id_prefix(profile)}{master_slug}_{derived.slug}"
+
+
 async def async_get_entities(
     hass: HomeAssistant, entry: ConfigEntry, platform: str
 ) -> list[Entity]:
@@ -53,6 +61,9 @@ async def async_get_entities(
         out.append(AvailableBinarySensor(coordinator, entry))
     # Abgeleitete Gate-/Policy-Binary-Sensoren aus Combineds (v0).
     for coordinator in combined_coordinators_for_entry(hass, entry).values():
+        for derived in coordinator.config.derived:
+            out.append(CombinedDerivedBinarySensor(coordinator, entry, derived))
+    for coordinator in master_coordinators_for_entry(hass, entry).values():
         for derived in coordinator.config.derived:
             out.append(CombinedDerivedBinarySensor(coordinator, entry, derived))
     return out
@@ -144,14 +155,17 @@ class CombinedDerivedBinarySensor(
         self, coordinator: CombinedCoordinator, entry: ConfigEntry, derived
     ) -> None:
         super().__init__(coordinator)
-        from . import COMBINED_HUB_IDENTIFIER
+        from . import COMBINED_HUB_IDENTIFIER, MASTER_HUB_IDENTIFIER
 
         self._derived = derived
+        kind = coordinator.kind
         self._attr_unique_id = unique_id(
-            entry.entry_id, f"combined_{coordinator.slug}_{derived.slug}"
+            entry.entry_id, f"{kind}_{coordinator.slug}_{derived.slug}"
         )
         self._attr_name = derived.name
-        self._attr_device_info = DeviceInfo(identifiers={COMBINED_HUB_IDENTIFIER})
+        self._attr_device_info = DeviceInfo(
+            identifiers={MASTER_HUB_IDENTIFIER if coordinator.is_master else COMBINED_HUB_IDENTIFIER}
+        )
         if derived.device_class:
             try:
                 self._attr_device_class = BinarySensorDeviceClass(derived.device_class)
@@ -159,8 +173,10 @@ class CombinedDerivedBinarySensor(
                 self._attr_device_class = None
         self.entity_id = async_generate_entity_id(
             "binary_sensor.{}",
-            _combined_derived_object_id(
-                coordinator.profile_name, coordinator.slug, derived
+            (
+                _master_derived_object_id(coordinator.profile_name, coordinator.slug, derived)
+                if coordinator.is_master
+                else _combined_derived_object_id(coordinator.profile_name, coordinator.slug, derived)
             ),
             hass=coordinator.hass,
         )

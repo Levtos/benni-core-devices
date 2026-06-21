@@ -14,16 +14,17 @@ from homeassistant.helpers import entity_registry as er
 from .const import (
     CONF_COMBINEDS,
     CONF_DEVICES,
+    CONF_LIGHT_GROUPS,
+    CONF_MASTERS,
     DATA_COMBINEDS,
     DATA_COORDINATORS,
+    DATA_MASTERS,
     DATA_WS_REGISTERED,
     DOMAIN,
     NAME,
-    combined_object_id_prefix,
-    device_object_id_prefix,
     entry_profile,
-    group_object_id_prefix,
 )
+from .bulk_import import published_output_entity_ids
 from .coordinator import CombinedCoordinator, DeviceCoordinator
 from .services import async_register_services
 from .view import async_setup_view
@@ -36,6 +37,7 @@ PLATFORMS: list[Platform] = [Platform.SENSOR, Platform.BINARY_SENSOR]
 HUB_IDENTIFIER = (DOMAIN, "hub")
 GROUPS_HUB_IDENTIFIER = (DOMAIN, "groups_hub")
 COMBINED_HUB_IDENTIFIER = (DOMAIN, "combined_hub")
+MASTER_HUB_IDENTIFIER = (DOMAIN, "master_hub")
 
 
 def _devices_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
@@ -48,15 +50,30 @@ def _combineds_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def _masters_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
+    raw = entry.options.get(CONF_MASTERS)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
+def _groups_conf(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
+    raw = entry.options.get(CONF_LIGHT_GROUPS)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def _device_identifier(slug: str) -> tuple[str, str]:
     return (DOMAIN, f"device:{slug}")
 
 
 def _reconcile_devices(
-    hass: HomeAssistant, entry: ConfigEntry, devices_conf: dict[str, dict[str, Any]]
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    devices_conf: dict[str, dict[str, Any]],
+    combineds_conf: dict[str, dict[str, Any]],
+    groups_conf: dict[str, dict[str, Any]],
+    masters_conf: dict[str, dict[str, Any]],
 ) -> None:
     dev_reg = dr.async_get(hass)
-    valid = {HUB_IDENTIFIER, GROUPS_HUB_IDENTIFIER, COMBINED_HUB_IDENTIFIER} | {
+    valid = {HUB_IDENTIFIER, GROUPS_HUB_IDENTIFIER, COMBINED_HUB_IDENTIFIER, MASTER_HUB_IDENTIFIER} | {
         _device_identifier(slug) for slug in devices_conf
     }
     for device in dr.async_entries_for_config_entry(dev_reg, entry.entry_id):
@@ -64,15 +81,16 @@ def _reconcile_devices(
             dev_reg.async_remove_device(device.id)
 
     profile = entry_profile(entry)
-    valid_prefixes = (
-        device_object_id_prefix(profile),
-        group_object_id_prefix(profile),
-        combined_object_id_prefix(profile),
+    valid_entity_ids = published_output_entity_ids(
+        profile,
+        devices_conf,
+        combineds_conf,
+        groups_conf,
+        masters_conf,
     )
     ent_reg = er.async_get(hass)
     for entity in er.async_entries_for_config_entry(ent_reg, entry.entry_id):
-        object_id = entity.entity_id.split(".", 1)[1]
-        if not object_id.startswith(valid_prefixes):
+        if entity.entity_id not in valid_entity_ids:
             ent_reg.async_remove(entity.entity_id)
 
 
@@ -103,9 +121,20 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         model="Combined Atomics Hub",
         entry_type=dr.DeviceEntryType.SERVICE,
     )
+    dev_reg.async_get_or_create(
+        config_entry_id=entry.entry_id,
+        identifiers={MASTER_HUB_IDENTIFIER},
+        name=f"{NAME} ({profile}) Masters",
+        manufacturer="Benni Core",
+        model="Domain Masters Hub",
+        entry_type=dr.DeviceEntryType.SERVICE,
+    )
 
     devices_conf = _devices_conf(entry)
-    _reconcile_devices(hass, entry, devices_conf)
+    combineds_conf = _combineds_conf(entry)
+    groups_conf = _groups_conf(entry)
+    masters_conf = _masters_conf(entry)
+    _reconcile_devices(hass, entry, devices_conf, combineds_conf, groups_conf, masters_conf)
 
     coordinators: dict[str, DeviceCoordinator] = {}
     for slug, conf in devices_conf.items():
@@ -116,17 +145,26 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         coordinators[slug] = coordinator
 
     combineds: dict[str, CombinedCoordinator] = {}
-    for slug, conf in _combineds_conf(entry).items():
+    for slug, conf in combineds_conf.items():
         combined = CombinedCoordinator(hass, entry, slug, conf)
         await combined.async_load_stored()
         await combined.async_config_entry_first_refresh()
         combined.async_start_listeners()
         combineds[slug] = combined
 
+    masters: dict[str, CombinedCoordinator] = {}
+    for slug, conf in masters_conf.items():
+        master = CombinedCoordinator(hass, entry, slug, conf, kind="master")
+        await master.async_load_stored()
+        await master.async_config_entry_first_refresh()
+        master.async_start_listeners()
+        masters[slug] = master
+
     data = hass.data.setdefault(DOMAIN, {})
     data[entry.entry_id] = {
         DATA_COORDINATORS: coordinators,
         DATA_COMBINEDS: combineds,
+        DATA_MASTERS: masters,
     }
 
     def _stop_all() -> None:
@@ -134,6 +172,8 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             coordinator.async_stop_listeners()
         for combined in combineds.values():
             combined.async_stop_listeners()
+        for master in masters.values():
+            master.async_stop_listeners()
 
     entry.async_on_unload(_stop_all)
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -163,6 +203,11 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 for combined in combineds.values():
                     if isinstance(combined, CombinedCoordinator):
                         combined.async_stop_listeners()
+            masters = bucket.get(DATA_MASTERS)
+            if isinstance(masters, dict):
+                for master in masters.values():
+                    if isinstance(master, CombinedCoordinator):
+                        master.async_stop_listeners()
     return unloaded
 
 

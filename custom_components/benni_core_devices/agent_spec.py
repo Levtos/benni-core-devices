@@ -126,6 +126,10 @@ _COMBINED_EXAMPLE = """```yaml
 # Combineds may live in the SAME bulk_import YAML under `combineds:`
 # (dict slug -> config), OR be created individually via WS `set_combined`
 # ({slug?, display_name, config}).
+#
+# Domain masters live under `masters:` and publish
+# `sensor.<profile>_master_<slug>`. Masters MUST consume raw HA entities only;
+# they combine the old atomic+combined contract in one sensor.
 combineds:
   opening_state:
     display_name: "Opening State"
@@ -143,12 +147,22 @@ combineds:
     code_legend: {"0": closed, "1": tilted, "2": open, "9": unclear}
     derived:
       - {slug: any_open, name: "Any Open", device_class: opening, target: open_contact, op: eq, value: "on"}
+masters:
+  tv:
+    display_name: "TV"
+    output_type: enum
+    sources:
+      - {key: state, role: tv_player, entity: media_player.living_lgtv}
+      - {key: watt, role: tv_watt, entity: sensor.living_tv_plug_power}
+    derived_values:
+      - {name: is_active, kind: gate, expr: 'any([${state} == "playing", ${watt} >= 8])', expose: true}
+    default_output: "off"
 ```"""
 
 
 def build_briefing(version: str, profile: str, export_yaml: str) -> str:
     blocked = ", ".join(f"`*{s}`" for s in BLOCKED_SOURCE_SUFFIXES)
-    own = f"`{profile}_device_*`, `{profile}_combined_*`, `{profile}_light_group_*`"
+    own = f"`{profile}_device_*`, `{profile}_combined_*`, `{profile}_master_*`, `{profile}_light_group_*`"
     classes = "\n".join(_class_block(ATOMIC_CLASSES[c], profile) for c in ALL_ATOMIC_CLASSES)
     return f"""# Benni Core Devices — Agent Briefing (Atomics + Combined)
 
@@ -201,6 +215,10 @@ dry-run before applying.
 6. **Combineds**: either include a `combineds:` block in the bulk_import YAML
    (dict slug → config; validated by the same dry-run), or create each via WS
    `benni_core_devices/set_combined` `{{slug?, display_name, config}}`.
+7. **Masters**: include a `masters:` block in the bulk_import YAML. Masters
+   publish `sensor.{profile}_master_<slug>` and are raw-only. Use top-level
+   `remove_devices:` / `remove_combineds:` when replacing obsolete atomics or
+   combineds with a master.
 
 ## Roles
 {_role_table()}
@@ -376,6 +394,18 @@ def build_json_schema() -> dict[str, Any]:
         "type": "object",
         "properties": {
             "devices": {"type": "array", "items": {"$ref": "#/$defs/device"}},
+            "combineds": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/combined_config"},
+            },
+            "masters": {
+                "type": "object",
+                "additionalProperties": {"$ref": "#/$defs/combined_config"},
+            },
+            "remove_devices": {"type": "array", "items": {"type": "string"}},
+            "remove_combineds": {"type": "array", "items": {"type": "string"}},
+            "remove_masters": {"type": "array", "items": {"type": "string"}},
+            "remove_light_groups": {"type": "array", "items": {"type": "string"}},
         },
         "$defs": {
             "binding": binding,

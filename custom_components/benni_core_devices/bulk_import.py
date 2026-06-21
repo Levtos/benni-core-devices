@@ -17,6 +17,7 @@ from .const import (
     CONF_EXPOSE_SECONDARY_SENSORS,
     CONF_GROUP_MEMBERS,
     CONF_LIGHT_GROUPS,
+    CONF_MASTERS,
     CONF_METADATA_SOURCES,
     CONF_SLUG,
     CONF_SOURCES,
@@ -24,6 +25,7 @@ from .const import (
     combined_object_id_prefix,
     device_object_id_prefix,
     group_object_id_prefix,
+    master_object_id_prefix,
 )
 from .device_types import (
     classify_source_entity,
@@ -36,6 +38,10 @@ from .device_types import (
 
 IMPORT_FILE_PARTS = ("benni_core_devices", "import.yaml")
 IMPORT_FILE_DISPLAY_PATH = "<config>/benni_core_devices/import.yaml"
+CONF_REMOVE_DEVICES = "remove_devices"
+CONF_REMOVE_COMBINEDS = "remove_combineds"
+CONF_REMOVE_GROUPS = "remove_light_groups"
+CONF_REMOVE_MASTERS = "remove_masters"
 
 
 def devices_from_options(options: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -53,11 +59,17 @@ def combineds_from_options(options: dict[str, Any]) -> dict[str, dict[str, Any]]
     return dict(raw) if isinstance(raw, dict) else {}
 
 
+def masters_from_options(options: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    raw = options.get(CONF_MASTERS)
+    return dict(raw) if isinstance(raw, dict) else {}
+
+
 def own_prefixes(profile: str) -> tuple[str, ...]:
     return (
         device_object_id_prefix(profile),
         group_object_id_prefix(profile),
         combined_object_id_prefix(profile),
+        master_object_id_prefix(profile),
     )
 
 
@@ -94,13 +106,24 @@ def combined_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{combined_object_id_prefix(profile)}{slug}"
 
 
+def master_sensor_entity_id(profile: str, slug: str) -> str:
+    return f"sensor.{master_object_id_prefix(profile)}{slug}"
+
+
 def group_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{group_object_id_prefix(profile)}{slug}"
 
 
-def combined_derived_binary_sensor_entity_id(profile: str, slug: str, derived: Any) -> str:
+def combined_derived_binary_sensor_entity_id(
+    profile: str,
+    slug: str,
+    derived: Any,
+    *,
+    master: bool = False,
+) -> str:
     override = getattr(derived, "object_id", None)
-    object_id = str(override) if override else f"{combined_object_id_prefix(profile)}{slug}_{derived.slug}"
+    prefix = master_object_id_prefix(profile) if master else combined_object_id_prefix(profile)
+    object_id = str(override) if override else f"{prefix}{slug}_{derived.slug}"
     return f"binary_sensor.{object_id}"
 
 
@@ -123,12 +146,22 @@ def _published_for_device(profile: str, slug: str, conf: dict[str, Any]) -> set[
     return out
 
 
-def _published_for_combined(profile: str, slug: str, conf: dict[str, Any]) -> set[str]:
-    out = {combined_sensor_entity_id(profile, slug)}
+def _published_for_combined(
+    profile: str,
+    slug: str,
+    conf: dict[str, Any],
+    *,
+    master: bool = False,
+) -> set[str]:
+    out = {
+        master_sensor_entity_id(profile, slug)
+        if master
+        else combined_sensor_entity_id(profile, slug)
+    }
     cfg = parse_combined(slug, conf)
     if cfg:
         out.update(
-            combined_derived_binary_sensor_entity_id(profile, slug, d)
+            combined_derived_binary_sensor_entity_id(profile, slug, d, master=master)
             for d in cfg.derived
         )
     return out
@@ -139,6 +172,7 @@ def published_output_entity_ids(
     devices: dict[str, dict[str, Any]] | None = None,
     combineds: dict[str, dict[str, Any]] | None = None,
     groups: dict[str, dict[str, Any]] | None = None,
+    masters: dict[str, dict[str, Any]] | None = None,
 ) -> set[str]:
     out: set[str] = set()
     for slug, conf in (devices or {}).items():
@@ -147,6 +181,9 @@ def published_output_entity_ids(
     for slug, conf in (combineds or {}).items():
         if isinstance(conf, dict):
             out.update(_published_for_combined(profile, str(slug), conf))
+    for slug, conf in (masters or {}).items():
+        if isinstance(conf, dict):
+            out.update(_published_for_combined(profile, str(slug), conf, master=True))
     for slug, conf in (groups or {}).items():
         if isinstance(conf, dict):
             out.add(group_sensor_entity_id(profile, str(slug)))
@@ -157,10 +194,15 @@ def import_start_published_outputs(
     current_options: dict[str, Any],
     valid: list[dict[str, Any]],
     imported_groups: dict[str, Any],
+    imported_masters: dict[str, Any],
     profile: str,
     replace: bool,
+    removals: dict[str, list[str]] | None = None,
 ) -> set[str]:
     devices = {} if replace else devices_from_options(current_options)
+    if not replace:
+        for slug in (removals or {}).get(CONF_DEVICES, []):
+            devices.pop(slug, None)
     for item in valid:
         slug = str(item.get(CONF_SLUG))
         devices[slug] = {k: v for k, v in item.items() if k != CONF_SLUG}
@@ -169,8 +211,22 @@ def import_start_published_outputs(
         if replace
         else {**groups_from_options(current_options), **imported_groups}
     )
+    if not replace:
+        for slug in (removals or {}).get(CONF_LIGHT_GROUPS, []):
+            groups.pop(slug, None)
     combineds = {} if replace else combineds_from_options(current_options)
-    return published_output_entity_ids(profile, devices, combineds, groups)
+    if not replace:
+        for slug in (removals or {}).get(CONF_COMBINEDS, []):
+            combineds.pop(slug, None)
+    masters = (
+        dict(imported_masters)
+        if replace
+        else {**masters_from_options(current_options), **imported_masters}
+    )
+    if not replace:
+        for slug in (removals or {}).get(CONF_MASTERS, []):
+            masters.pop(slug, None)
+    return published_output_entity_ids(profile, devices, combineds, groups, masters)
 
 
 def normalize_combineds(raw: Any) -> dict[str, dict[str, Any]]:
@@ -197,18 +253,49 @@ def normalize_combineds(raw: Any) -> dict[str, dict[str, Any]]:
     return out
 
 
+def normalize_remove_list(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    out: list[str] = []
+    for item in raw:
+        slug = str(item or "").strip().lower()
+        if slug:
+            out.append(slug)
+    return out
+
+
 def parse_bulk_payload(
     raw: str,
-) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
+) -> tuple[
+    list[dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[str, list[str]],
+]:
     parsed = yaml.safe_load(raw) if raw and raw.strip() else None
     if isinstance(parsed, dict):
         devices = parsed.get(CONF_DEVICES, [])
         groups = parsed.get(CONF_LIGHT_GROUPS, {})
         combineds_raw = parsed.get(CONF_COMBINEDS, {})
+        masters_raw = parsed.get(CONF_MASTERS, {})
+        removals = {
+            CONF_DEVICES: normalize_remove_list(parsed.get(CONF_REMOVE_DEVICES)),
+            CONF_COMBINEDS: normalize_remove_list(parsed.get(CONF_REMOVE_COMBINEDS)),
+            CONF_LIGHT_GROUPS: normalize_remove_list(parsed.get(CONF_REMOVE_GROUPS)),
+            CONF_MASTERS: normalize_remove_list(parsed.get(CONF_REMOVE_MASTERS)),
+        }
     else:
         devices = parsed
         groups = {}
         combineds_raw = {}
+        masters_raw = {}
+        removals = {
+            CONF_DEVICES: [],
+            CONF_COMBINEDS: [],
+            CONF_LIGHT_GROUPS: [],
+            CONF_MASTERS: [],
+        }
     valid: list[dict[str, Any]] = []
     if devices:  # Devices are optional when only combineds are imported.
         if isinstance(devices, list):
@@ -221,7 +308,8 @@ def parse_bulk_payload(
         if errors:
             raise ValueError("\n".join(errors))
     combineds = normalize_combineds(combineds_raw)
-    return valid, (groups if isinstance(groups, dict) else {}), combineds
+    masters = normalize_combineds(masters_raw)
+    return valid, (groups if isinstance(groups, dict) else {}), combineds, masters, removals
 
 
 def replace_from_payload(raw: str) -> bool:
@@ -268,6 +356,8 @@ def combined_report(
     combineds: dict[str, dict[str, Any]],
     profile: str,
     published_outputs: set[str] | frozenset[str] | None = None,
+    *,
+    master: bool = False,
 ) -> list[dict[str, Any]]:
     own = own_prefixes(profile)
     published = set(published_outputs or set())
@@ -282,6 +372,13 @@ def combined_report(
         if cfg:
             for src in cfg.sources:
                 if not src.entity:
+                    continue
+                if master:
+                    cat = classify_source_entity(src.entity, own_prefixes=own)
+                    if cat:
+                        msg = source_warning_text(cat, src.entity)
+                        derived_sources.append(msg)
+                        source_blocks.append(msg)
                     continue
                 cat = classify_source_entity(
                     src.entity, own_prefixes=own, published_outputs=published
@@ -306,7 +403,11 @@ def combined_report(
             "sources": n,
             "derived_values": len(cfg.derived_values) if cfg else 0,
             "exposed_attributes": list(exposed_derived_names(cfg)) if cfg else [],
-            "entity_id": combined_sensor_entity_id(profile, slug),
+            "entity_id": (
+                master_sensor_entity_id(profile, slug)
+                if master else combined_sensor_entity_id(profile, slug)
+            ),
+            "kind": "master" if master else "combined",
             "derived_sources": derived_sources,
             "source_blocks": source_blocks,
             "accepted_sources": accepted_sources,
@@ -314,7 +415,9 @@ def combined_report(
             "accepted": cfg is not None and not validation and not source_blocks,
         })
         if isinstance(conf, dict):
-            published.update(_published_for_combined(profile, str(slug), conf))
+            published.update(
+                _published_for_combined(profile, str(slug), conf, master=master)
+            )
     return rep
 
 def apply_bulk(
@@ -322,22 +425,38 @@ def apply_bulk(
     valid: list[dict[str, Any]],
     imported_groups: dict[str, Any],
     imported_combineds: dict[str, Any],
+    imported_masters: dict[str, Any],
+    removals: dict[str, list[str]] | None = None,
     replace: bool = False,
-) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any], dict[str, Any]]:
     # replace=True means clean slate: existing entries are not merged.
     devices = {} if replace else devices_from_options(current_options)
+    if not replace:
+        for slug in (removals or {}).get(CONF_DEVICES, []):
+            devices.pop(slug, None)
     for item in valid:
         slug = str(item.pop(CONF_SLUG))
         devices[slug] = item
     groups = dict(imported_groups) if replace else {**groups_from_options(current_options), **imported_groups}
+    if not replace:
+        for slug in (removals or {}).get(CONF_LIGHT_GROUPS, []):
+            groups.pop(slug, None)
     combineds = dict(imported_combineds) if replace else {**combineds_from_options(current_options), **imported_combineds}
-    return devices, groups, combineds
+    if not replace:
+        for slug in (removals or {}).get(CONF_COMBINEDS, []):
+            combineds.pop(slug, None)
+    masters = dict(imported_masters) if replace else {**masters_from_options(current_options), **imported_masters}
+    if not replace:
+        for slug in (removals or {}).get(CONF_MASTERS, []):
+            masters.pop(slug, None)
+    return devices, groups, combineds, masters
 
 
 def export_yaml_from_options(options: dict[str, Any]) -> str:
     payload = {
         CONF_DEVICES: [{CONF_SLUG: slug, **conf} for slug, conf in devices_from_options(options).items()],
         CONF_COMBINEDS: combineds_from_options(options),
+        CONF_MASTERS: masters_from_options(options),
         CONF_LIGHT_GROUPS: groups_from_options(options),
     }
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
@@ -350,8 +469,11 @@ def error_response(dry_run: bool, replace: bool, message: str) -> dict[str, Any]
         "devices": 0,
         "groups": 0,
         "combineds": 0,
+        "masters": 0,
         "report": [],
         "combined_report": [],
+        "master_report": [],
         "combineds_in": 0,
+        "masters_in": 0,
         "error": message,
     }

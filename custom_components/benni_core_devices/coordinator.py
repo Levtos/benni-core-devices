@@ -30,6 +30,7 @@ from .const import (
     CONF_SLUG,
     DATA_COMBINEDS,
     DATA_COORDINATORS,
+    DATA_MASTERS,
     DOMAIN,
     POWER_MODEL_NUMERIC,
     POWER_MODEL_PASSTHROUGH,
@@ -353,12 +354,19 @@ class CombinedCoordinator(DataUpdateCoordinator):
     """Treibt einen Combined-Atomic-Sensor (First-Match-Wins, v0)."""
 
     def __init__(
-        self, hass: HomeAssistant, entry: ConfigEntry, slug: str, raw_conf: dict
+        self,
+        hass: HomeAssistant,
+        entry: ConfigEntry,
+        slug: str,
+        raw_conf: dict,
+        *,
+        kind: str = "combined",
     ) -> None:
+        self._kind = "master" if kind == "master" else "combined"
         super().__init__(
             hass,
             _LOGGER,
-            name=f"{DOMAIN}_{entry.entry_id}_combined_{slug}",
+            name=f"{DOMAIN}_{entry.entry_id}_{self._kind}_{slug}",
             update_interval=timedelta(seconds=UPDATE_INTERVAL_SECONDS),
         )
         from .combined import CombinedConfig, CombinedPersisted, parse_combined
@@ -374,7 +382,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
         self._last_readings: dict[str, Any] = {}
         self._store = Store(
             hass, STORAGE_VERSION,
-            storage_key(entry.entry_id, f"combined_{slug}", self._profile_name),
+            storage_key(entry.entry_id, f"{self._kind}_{slug}", self._profile_name),
         )
         self._persisted = CombinedPersisted()
 
@@ -395,6 +403,14 @@ class CombinedCoordinator(DataUpdateCoordinator):
     @property
     def profile_name(self) -> str:
         return self._profile_name
+
+    @property
+    def kind(self) -> str:
+        return self._kind
+
+    @property
+    def is_master(self) -> bool:
+        return self._kind == "master"
 
     @property
     def config(self):
@@ -482,6 +498,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
             return {}
         return {
             "slug": self._slug,
+            "kind": self._kind,
             "display_name": self._config.display_name,
             "output_type": self._config.output_type,
             "output": result.output,
@@ -526,6 +543,17 @@ def combined_coordinators_for_entry(
     if not bucket:
         return {}
     coords = bucket.get(DATA_COMBINEDS)
+    return coords if isinstance(coords, dict) else {}
+
+
+@callback
+def master_coordinators_for_entry(
+    hass: HomeAssistant, entry: ConfigEntry
+) -> dict[str, "CombinedCoordinator"]:
+    bucket = hass.data.get(DOMAIN, {}).get(entry.entry_id)
+    if not bucket:
+        return {}
+    coords = bucket.get(DATA_MASTERS)
     return coords if isinstance(coords, dict) else {}
 
 

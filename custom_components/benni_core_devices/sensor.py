@@ -37,6 +37,7 @@ from .const import (
     device_object_id_prefix,
     group_object_id_prefix,
     entry_profile,
+    master_object_id_prefix,
     unique_id,
 )
 from .coordinator import (
@@ -44,6 +45,7 @@ from .coordinator import (
     DeviceCoordinator,
     combined_coordinators_for_entry,
     coordinators_for_entry,
+    master_coordinators_for_entry,
 )
 from .logic import DeviceResult
 
@@ -81,6 +83,9 @@ async def async_get_entities(
                 out.append(WattSensor(coordinator, entry))
     # Combined-Atomics (First-Match-Wins) — ein Sensor je Combined.
     for coordinator in combined_coordinators_for_entry(hass, entry).values():
+        out.append(CombinedAtomicSensor(coordinator, entry))
+    # Domain-Master: raw-source master sensors with the same engine.
+    for coordinator in master_coordinators_for_entry(hass, entry).values():
         out.append(CombinedAtomicSensor(coordinator, entry))
     # Atomic Light Groups (Mengen von Lampen) — ein Sensor je Gruppe.
     groups = entry.options.get(CONF_LIGHT_GROUPS)
@@ -251,10 +256,9 @@ class LightGroupSensor(SensorEntity):
 
 
 class CombinedAtomicSensor(CoordinatorEntity[CombinedCoordinator], SensorEntity):
-    """Combined-Atomic-Sensor (First-Match-Wins, v0).
+    """Combined or domain-master sensor (First-Match-Wins, v0).
 
-    State = der gecoerzte Output (`sensor.<profile>_combined_<slug>`). Attribute
-    spiegeln Quellen, Reason, Code-Legende und Degraded-Diagnose wider.
+    Attribute spiegeln Quellen, Reason, Code-Legende und Degraded-Diagnose wider.
     """
 
     _attr_has_entity_name = False
@@ -263,14 +267,23 @@ class CombinedAtomicSensor(CoordinatorEntity[CombinedCoordinator], SensorEntity)
 
     def __init__(self, coordinator: CombinedCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
-        from . import COMBINED_HUB_IDENTIFIER
+        from . import COMBINED_HUB_IDENTIFIER, MASTER_HUB_IDENTIFIER
 
-        self._attr_unique_id = unique_id(entry.entry_id, f"combined_{coordinator.slug}")
+        kind = coordinator.kind
+        prefix = (
+            master_object_id_prefix(coordinator.profile_name)
+            if coordinator.is_master
+            else combined_object_id_prefix(coordinator.profile_name)
+        )
+        self._attr_unique_id = unique_id(entry.entry_id, f"{kind}_{coordinator.slug}")
         self._attr_name = coordinator.config.display_name
-        self._attr_device_info = DeviceInfo(identifiers={COMBINED_HUB_IDENTIFIER})
+        self._attr_device_info = DeviceInfo(
+            identifiers={MASTER_HUB_IDENTIFIER if coordinator.is_master else COMBINED_HUB_IDENTIFIER}
+        )
+        self._attr_icon = "mdi:hub" if coordinator.is_master else "mdi:set-merge"
         self.entity_id = async_generate_entity_id(
             "sensor.{}",
-            f"{combined_object_id_prefix(coordinator.profile_name)}{coordinator.slug}",
+            f"{prefix}{coordinator.slug}",
             hass=coordinator.hass,
         )
 

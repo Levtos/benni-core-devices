@@ -17,6 +17,7 @@ STORAGE_VERSION: Final[int] = 1
 # hass.data flags / entry buckets
 DATA_COORDINATORS: Final = "coordinators"
 DATA_COMBINEDS: Final = "combined_coordinators"
+DATA_MASTERS: Final = "master_coordinators"
 DATA_WS_REGISTERED: Final = "_ws_registered"
 DATA_VIEW_STATIC: Final = "_view_static_registered"
 DATA_VIEW_PANEL: Final = "_view_panel_registered"
@@ -137,6 +138,7 @@ CONF_FIELDS: Final[str] = "fields"
 
 # Combined Builder v0 — eigene Options-Sektion, additiv neben devices/groups.
 CONF_COMBINEDS: Final[str] = "combineds"
+CONF_MASTERS: Final[str] = "masters"
 CONF_OUTPUT_TYPE: Final[str] = "output_type"
 CONF_SOURCES: Final[str] = "sources"
 CONF_RULES: Final[str] = "rules"
@@ -263,6 +265,11 @@ def group_object_id_prefix(profile: str) -> str:
 def combined_object_id_prefix(profile: str) -> str:
     """Object-id prefix for combined-atomic sensors."""
     return f"{profile}_combined_"
+
+
+def master_object_id_prefix(profile: str) -> str:
+    """Object-id prefix for raw-source domain master sensors."""
+    return f"{profile}_master_"
 
 
 def entry_profile(entry) -> str:

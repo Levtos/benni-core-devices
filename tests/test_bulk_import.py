@@ -43,6 +43,7 @@ def _options():
                 "default_output": 0,
             }
         },
+        "masters": {},
         "light_groups": {
             "living_lights": {
                 "display_name": "Wohnzimmer Licht",
@@ -56,12 +57,15 @@ def test_export_yaml_round_trips_through_bulk_apply():
     exported = BI.export_yaml_from_options(_options())
 
     assert BI.replace_from_payload(exported) is False
-    valid, groups, combineds = BI.parse_bulk_payload(exported)
-    devices, new_groups, new_combineds = BI.apply_bulk({}, valid, groups, combineds)
+    valid, groups, combineds, masters, removals = BI.parse_bulk_payload(exported)
+    devices, new_groups, new_combineds, new_masters = BI.apply_bulk(
+        {}, valid, groups, combineds, masters, removals
+    )
 
     assert devices == _options()["devices"]
     assert new_groups == _options()["light_groups"]
     assert new_combineds == _options()["combineds"]
+    assert new_masters == _options()["masters"]
 
 
 def test_file_replace_flag_is_clean_slate():
@@ -70,22 +74,25 @@ def test_file_replace_flag_is_clean_slate():
         "replace": True,
         "devices": [{"slug": slug, **conf} for slug, conf in opts["devices"].items()],
         "combineds": opts["combineds"],
+        "masters": {"living_tv": {"display_name": "Living TV Master"}},
         "light_groups": opts["light_groups"],
     })
     current = {
         "devices": {"old": {"atomic_class": "light", "display_name": "Old"}},
         "combineds": {"old": {"display_name": "Old"}},
+        "masters": {"old": {"display_name": "Old"}},
         "light_groups": {"old": {"display_name": "Old", "members": []}},
     }
 
-    valid, groups, combineds = BI.parse_bulk_payload(exported)
-    devices, new_groups, new_combineds = BI.apply_bulk(
-        current, valid, groups, combineds, replace=BI.replace_from_payload(exported)
+    valid, groups, combineds, masters, removals = BI.parse_bulk_payload(exported)
+    devices, new_groups, new_combineds, new_masters = BI.apply_bulk(
+        current, valid, groups, combineds, masters, removals, replace=BI.replace_from_payload(exported)
     )
 
     assert devices == _options()["devices"]
     assert new_groups == _options()["light_groups"]
     assert new_combineds == _options()["combineds"]
+    assert new_masters == {"living_tv": {"display_name": "Living TV Master"}}
 
 
 def test_replace_flag_must_be_boolean():
@@ -115,9 +122,12 @@ def test_file_error_response_keeps_bulk_report_shape():
         "devices": 0,
         "groups": 0,
         "combineds": 0,
+        "masters": 0,
         "report": [],
         "combined_report": [],
+        "master_report": [],
         "combineds_in": 0,
+        "masters_in": 0,
         "error": "Import file not found",
     }
 
@@ -125,6 +135,18 @@ def test_file_error_response_keeps_bulk_report_shape():
 def test_published_output_entity_ids_include_secondary_combined_and_group_outputs():
     opts = _options()
     opts["devices"]["living_tv"]["expose_secondary_sensors"] = True
+    opts["masters"]["living_tv"] = {
+        "display_name": "Living TV Master",
+        "derived": [
+            {
+                "slug": "blocks_cut",
+                "name": "Blocks Cut",
+                "target": "__output__",
+                "op": "eq",
+                "value": "active",
+            }
+        ],
+    }
     opts["combineds"]["opening_state"]["derived"] = [
         {
             "slug": "blocks_climate",
@@ -141,6 +163,7 @@ def test_published_output_entity_ids_include_secondary_combined_and_group_output
         opts["devices"],
         opts["combineds"],
         opts["light_groups"],
+        opts["masters"],
     )
 
     assert {
@@ -151,12 +174,15 @@ def test_published_output_entity_ids_include_secondary_combined_and_group_output
         "sensor.benni_device_living_tv_watt",
         "sensor.benni_combined_opening_state",
         "binary_sensor.legacy_blocks_climate",
+        "sensor.benni_master_living_tv",
+        "binary_sensor.benni_master_living_tv_blocks_cut",
         "sensor.benni_light_group_living_lights",
     } <= published
 
 
 def test_import_start_published_outputs_merges_imported_devices_and_existing_outputs():
     current = _options()
+    current["masters"]["living_tv"] = {"display_name": "Living TV Master"}
     valid = [
         {
             "slug": "desk_plug",
@@ -169,11 +195,12 @@ def test_import_start_published_outputs_merges_imported_devices_and_existing_out
     }
 
     published = BI.import_start_published_outputs(
-        current, valid, imported_groups, "benni", replace=False
+        current, valid, imported_groups, {}, "benni", replace=False
     )
 
     assert "sensor.benni_device_desk_plug" in published
     assert "sensor.benni_combined_opening_state" in published
+    assert "sensor.benni_master_living_tv" in published
     assert "sensor.benni_light_group_desk_lights" in published
 
 
@@ -267,3 +294,63 @@ def test_combined_report_allows_references_to_earlier_imported_combineds_only():
         "sensor.benni_combined_first_gate: "
         "publizierter Core-Devices-Output als Fusion-Quelle akzeptiert"
     ]
+
+
+def test_master_report_blocks_core_outputs_even_when_published():
+    report = BI.combined_report(
+        {
+            "living_tv": {
+                "display_name": "Living TV Master",
+                "sources": [
+                    {
+                        "key": "old_atomic",
+                        "role": "tv_device",
+                        "entity": "sensor.benni_device_living_tv",
+                    },
+                    {
+                        "key": "old_combined",
+                        "role": "media_context",
+                        "entity": "sensor.benni_combined_media_context",
+                    },
+                ],
+                "default_output": "off",
+            }
+        },
+        "benni",
+        {
+            "sensor.benni_device_living_tv",
+            "sensor.benni_combined_media_context",
+        },
+        master=True,
+    )
+
+    assert report[0]["accepted"] is False
+    assert report[0]["entity_id"] == "sensor.benni_master_living_tv"
+    assert report[0]["source_blocks"] == [
+        "sensor.benni_device_living_tv: von dieser Integration selbst erzeugte Quelle sollte nicht als Raw-Quelle dienen",
+        "sensor.benni_combined_media_context: von dieser Integration selbst erzeugte Quelle sollte nicht als Raw-Quelle dienen",
+    ]
+
+
+def test_apply_bulk_removes_named_existing_outputs_in_merge_mode():
+    current = _options()
+    current["devices"]["old_device"] = {"display_name": "Old"}
+    current["combineds"]["old_combined"] = {"display_name": "Old"}
+    current["masters"]["old_master"] = {"display_name": "Old"}
+
+    payload = json.dumps({
+        "remove_devices": ["old_device"],
+        "remove_combineds": ["old_combined"],
+        "remove_masters": ["old_master"],
+        "combineds": {"new_combined": {"display_name": "New"}},
+    })
+
+    valid, groups, combineds, masters, removals = BI.parse_bulk_payload(payload)
+    devices, _groups, new_combineds, new_masters = BI.apply_bulk(
+        current, valid, groups, combineds, masters, removals
+    )
+
+    assert "old_device" not in devices
+    assert "old_combined" not in new_combineds
+    assert "old_master" not in new_masters
+    assert "new_combined" in new_combineds

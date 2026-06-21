@@ -412,16 +412,20 @@ class CombinedCoordinator(DataUpdateCoordinator):
             if not src.entity:
                 continue
             state = self.hass.states.get(src.entity)
-            if state is None or state.state in (STATE_UNAVAILABLE, STATE_UNKNOWN, ""):
+            if state is None:
+                readings[src.key] = SourceReading(value=None, available=False)
+                continue
+            value: Any = state.attributes.get(src.attribute) if src.attribute else state.state
+            if value is None or (not src.attribute and value in (STATE_UNAVAILABLE, STATE_UNKNOWN, "")):
                 readings[src.key] = SourceReading(value=None, available=False)
                 continue
             numeric: float | None
             try:
-                numeric = float(state.state)
+                numeric = float(value)
             except (TypeError, ValueError):
                 numeric = None
             readings[src.key] = SourceReading(
-                value=state.state, numeric=numeric, available=True,
+                value=value, numeric=numeric, available=True,
                 attributes=dict(state.attributes),
             )
         return readings
@@ -484,6 +488,7 @@ class CombinedCoordinator(DataUpdateCoordinator):
             "reason": result.reason,
             "code_legend": dict(self._config.code_legend),
             "source_entities": result.source_entities,
+            "source_attributes": result.source_attributes,
             "source_states": result.source_states,
             "source_available": result.source_available,
             "missing_sources": result.missing_sources,

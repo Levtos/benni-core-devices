@@ -337,6 +337,9 @@ devices:
 
 When `attribute` is set, the source value is `state_attr(entity, attribute)`.
 If the attribute is missing or `None`, the source is treated as unavailable.
+The same syntax is supported for `combineds.*.sources[]`, which lets a Master
+publish selected attributes from another Core Devices output without duplicating
+raw source wiring.
 
 ## Known Gap: Rich Atomic Attributes
 

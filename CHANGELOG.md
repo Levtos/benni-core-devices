@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.4.15 - FLEET-130/131: Combined Attribute Sources
+
+- Allow Combined sources to read `state_attr(entity, attribute)` via optional `attribute`, matching device bindings.
+- Expose `source_attributes` in Combined diagnostics so Master contracts show which sources read states vs attributes.
+- Preserve Combined source attributes in the Builder and document the syntax for agents.
+
 ## 0.4.14 - FLEET-126: TV Power-Down Sticky Hold
 
 - Stop watt-primary sticky-hold for assumed-state integrations when the integration source freshly reports `off` and the watt meter is already below the on threshold.

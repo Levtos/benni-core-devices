@@ -88,7 +88,12 @@ function draftFromCombined(c) {
   return {
     slug: c.slug || "", display_name: c.display_name || conf.display_name || "",
     output_type: conf.output_type || "enum",
-    sources: (conf.sources || []).map((s) => ({ key: s.key || s.role || "", role: s.role || "custom", entity: s.entity || "" })),
+    sources: (conf.sources || []).map((s) => ({
+      key: s.key || s.role || "",
+      role: s.role || "custom",
+      entity: s.entity || "",
+      attribute: s.attribute || "",
+    })),
     rules: (conf.rules || []).map((r) => ({ source: r.source || "", op: r.op || "eq", value: r.value ?? "", output: r.output ?? "", reason: r.reason || "" })),
     default_output: conf.default_output ?? "", default_reason: conf.default_reason || "",
     code_legend: conf.code_legend || {},
@@ -132,7 +137,13 @@ function sync(root) {
       key: row.querySelector('[name="src_key"]') ? row.querySelector('[name="src_key"]').value.trim() : row.dataset.key,
       role: row.querySelector('[name="src_role"]') ? row.querySelector('[name="src_role"]').value : (row.dataset.role || "custom"),
       entity: row.querySelector('[name="src_entity"]').value.trim(),
+      attribute: row.querySelector('[name="src_attribute"]') ? row.querySelector('[name="src_attribute"]').value.trim() : "",
     })).filter((s) => s.key || s.entity);
+    d.sources = d.sources.map((s) => {
+      const out = { key: s.key, role: s.role, entity: s.entity };
+      if (s.attribute) out.attribute = s.attribute;
+      return out;
+    });
   }
   // Rules nur wenn Expert-Editor sichtbar (sonst Template-Regeln behalten)
   if (root.querySelector("#rules")) {
@@ -266,9 +277,10 @@ export function render(root, ctx) {
             <div class="step-head"><span class="num">2</span><div><h3>Quellen</h3><small>Roh-Entities zuordnen</small></div></div>
             <div id="sources">
               ${d.sources.map((s, i) => `
-                <div class="slot-row" data-src="${i}" data-key="${esc(s.key)}" data-role="${esc(s.role)}" style="grid-template-columns:1fr 1.6fr ${canAddSource ? "30px" : "0"}">
+                <div class="slot-row" data-src="${i}" data-key="${esc(s.key)}" data-role="${esc(s.role)}" style="grid-template-columns:1fr 1.4fr 0.8fr ${canAddSource ? "30px" : "0"}">
                   <span class="slot-name">${esc(s.role)}<small>${esc(s.key)}</small></span>
                   <span><input name="src_entity" list="all_entities" value="${esc(s.entity)}" placeholder="entity_id"></span>
+                  <span><input name="src_attribute" value="${esc(s.attribute || "")}" placeholder="attribute"></span>
                   ${canAddSource ? `<button class="btn small danger" type="button" data-del-src="${i}">×</button>` : "<span></span>"}
                 </div>`).join("") || `<div class="muted">Noch keine Quellen.</div>`}
             </div>
@@ -348,7 +360,7 @@ export function render(root, ctx) {
     sync(root);
     const n = d.sources.length + 1;
     const role = d._template === "any_active" ? "input" : "custom";
-    d.sources.push({ key: `s${n}`, role, entity: "" });
+    d.sources.push({ key: `s${n}`, role, entity: "", attribute: "" });
     ctx.rerender();
   });
   root.querySelectorAll("[data-del-src]").forEach((b) =>

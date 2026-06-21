@@ -133,6 +133,7 @@ combineds:
     sources:
       - {key: open, role: open_contact, entity: binary_sensor.left_open}
       - {key: tilt, role: tilt_contact, entity: binary_sensor.left_tilt}
+      - {key: source_watt, role: watt, entity: sensor.benni_device_ps5, attribute: watt}
     rules:                             # first-match-wins, in order
       - {source: open, op: unavailable, output: 9, reason: "open unclear"}
       - {source: open, op: eq, value: "on", output: 2, reason: open}
@@ -172,7 +173,8 @@ dry-run before applying.
   entity — pick the primary contact's battery or omit.
 - A binding may set `attribute:` next to `entity:`; then the source value is
   `state_attr(entity, attribute)` instead of the entity state. Use this for
-  weather entities such as `weather.dwd_home` (`temperature`, `humidity`, ...).
+  weather entities such as `weather.dwd_home` (`temperature`, `humidity`, ...)
+  and for Combined sources reading attributes from published Core Devices outputs.
 
 ## Workflow
 > Import/export is available **both** as WebSocket commands and as **HA services**
@@ -343,11 +345,22 @@ def build_json_schema() -> dict[str, Any]:
             "value": {"type": "string"},
         },
     }
+    combined_source = {
+        "type": "object",
+        "required": ["key"],
+        "properties": {
+            "key": {"type": "string"},
+            "role": {"type": "string"},
+            "entity": {"type": "string"},
+            "attribute": {"type": "string"},
+        },
+        "additionalProperties": False,
+    }
     combined_config = {
         "type": "object",
         "properties": {
             "output_type": {"enum": list(OUTPUT_TYPE_CHOICES)},
-            "sources": {"type": "array"},
+            "sources": {"type": "array", "items": {"$ref": "#/$defs/combined_source"}},
             "rules": {"type": "array", "items": {"$ref": "#/$defs/rule"}},
             "default_output": {},
             "default_reason": {"type": "string"},
@@ -369,6 +382,7 @@ def build_json_schema() -> dict[str, Any]:
             "device": device,
             "rule": rule,
             "derived_sensor": derived_sensor,
+            "combined_source": combined_source,
             "derived_case": derived_case,
             "derived_value": derived_value,
             "combined_config": combined_config,

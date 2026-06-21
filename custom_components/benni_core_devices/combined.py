@@ -62,7 +62,7 @@ SELF_REF = "self"
 class SourceReading:
     """Snapshot einer Combined-Quelle."""
 
-    value: str | None
+    value: Any | None
     numeric: float | None = None
     available: bool = True
     # Attribute der Quell-Entity (für health-Node: atomic_quality/degraded/…).
@@ -76,6 +76,7 @@ class CombinedSource:
     key: str          # eindeutig innerhalb des Combined (Referenz in Regeln)
     role: str         # fachliche Rolle (open_contact, tilt_contact, ...)
     entity: str | None = None  # Raw-Entity-ID
+    attribute: str | None = None  # optional: state_attr(entity, attribute) statt State
 
 
 @dataclass(frozen=True)
@@ -163,6 +164,7 @@ class CombinedResult:
     reason: str
     matched_rule: int | None
     source_entities: dict[str, str]
+    source_attributes: dict[str, str]
     source_states: dict[str, Any]
     source_available: dict[str, bool]
     missing_sources: list[str]
@@ -499,6 +501,7 @@ def evaluate_combined(
         reason=reason,
         matched_rule=matched,
         source_entities=source_entities,
+        source_attributes={s.key: s.attribute for s in config.sources if s.attribute},
         source_states=source_states,
         source_available=source_available,
         missing_sources=missing_sources,
@@ -517,8 +520,8 @@ def validate_combined_v1(config: CombinedConfig) -> list[str]:
     allowed = source_keys | names | {SELF_REF}
     reserved_attributes = {
         "slug", "display_name", "output_type", "output", "reason", "code_legend",
-        "source_entities", "source_states", "source_available", "missing_sources",
-        "degraded", "degraded_reason", "derived", "shadow_compare",
+        "source_entities", "source_attributes", "source_states", "source_available",
+        "missing_sources", "degraded", "degraded_reason", "derived", "shadow_compare",
     }
 
     def check_expr(label: str, e: str | None, is_latch: bool = False) -> None:
@@ -662,6 +665,11 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
                 key=key,
                 role=str(item.get("role") or "custom"),
                 entity=(str(item["entity"]) if item.get("entity") else None),
+                attribute=(
+                    str(item["attribute"]).strip()
+                    if item.get("attribute")
+                    else None
+                ),
             )
         )
 

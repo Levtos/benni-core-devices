@@ -289,6 +289,57 @@ def test_exposed_derived_attributes_are_flat_and_explicit():
     }
 
 
+def test_combined_master_can_publish_entity_attribute_sources():
+    raw = {
+        "display_name": "PS5",
+        "output_type": "enum",
+        "sources": [
+            {"key": "state", "role": "ps5_device", "entity": "sensor.benni_device_ps5"},
+            {"key": "source_powered", "role": "ps5_powered", "entity": "sensor.benni_device_ps5", "attribute": "powered"},
+            {"key": "source_watt", "role": "ps5_watt", "entity": "sensor.benni_device_ps5", "attribute": "watt"},
+            {"key": "source_title", "role": "ps5_title", "entity": "sensor.benni_device_ps5", "attribute": "title"},
+            {"key": "source_media_context", "role": "media_context", "entity": "sensor.benni_combined_media_context"},
+        ],
+        "derived_values": [
+            {"name": "is_powered", "kind": "gate", "expr": "${source_powered}", "expose": True},
+            {"name": "watt", "kind": "expr", "expr": "${source_watt}", "expose": True},
+            {"name": "title", "kind": "enum", "default": "${source_title}", "expose": True},
+            {"name": "media_context", "kind": "enum", "default": "${source_media_context}", "expose": True},
+        ],
+        "default_output": "${state}",
+        "default_reason": "ps5_device_state",
+    }
+
+    cfg = CB.parse_combined("ps5", raw)
+    assert cfg is not None
+    assert cfg.sources[1].attribute == "powered"
+    assert CB.validate_combined_v1(cfg) == []
+
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "state": _r("playing"),
+            "source_powered": _r(True, numeric=1.0),
+            "source_watt": _r(42.4, numeric=42.4),
+            "source_title": _r("Astro Bot"),
+            "source_media_context": _r("gaming"),
+        },
+    )
+
+    assert res.state == "playing"
+    assert res.source_attributes == {
+        "source_powered": "powered",
+        "source_watt": "watt",
+        "source_title": "title",
+    }
+    assert CB.exposed_derived_attributes(cfg, res) == {
+        "is_powered": True,
+        "watt": 42.4,
+        "title": "Astro Bot",
+        "media_context": "gaming",
+    }
+
+
 def test_exposed_derived_attributes_validate_names_and_reserved_keys():
     unknown = _cfg(
         sources=(_src("a"),),

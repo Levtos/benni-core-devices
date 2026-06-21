@@ -104,7 +104,7 @@ function draftFromCombined(c) {
   };
 }
 
-function isMasterConfig(conf) {
+function hasExposedAttributes(conf) {
   return (conf.exposed_attributes || []).length > 0
     || (conf.derived_values || []).some((d) => d && d.expose);
 }
@@ -180,7 +180,7 @@ function previewCard(d, status) {
   const entityId = `sensor.${profile}_combined_${d.slug || "<slug>"}`;
   const live = (status.combineds || []).find((c) => c.slug === d.slug);
   const a = (live && live.attrs) || {};
-  const master = isMasterConfig(d);
+  const exposesAttrs = hasExposedAttributes(d);
   const legend = d.output_type === "code"
     ? Object.entries(d.code_legend || {}).map(([k, v]) => `<div class="kv"><span class="k mono">${esc(k)}</span><span class="v">${esc(v)}</span></div>`).join("")
     : "";
@@ -189,12 +189,12 @@ function previewCard(d, status) {
       <h2>Preview / Output</h2>
       <div class="preview">
         <div class="summary-line"><ha-icon icon="mdi:identifier"></ha-icon><span class="mono pv-id">${esc(entityId)}</span></div>
-        <div class="summary-line"><ha-icon icon="${master ? "mdi:hub" : "mdi:set-merge"}"></ha-icon>${master ? "Master/Fusion" : "Combined"}</div>
+        <div class="summary-line"><ha-icon icon="mdi:set-merge"></ha-icon>Combined</div>
         <div class="summary-line"><ha-icon icon="mdi:export"></ha-icon>Output-Typ: <b>${esc(d.output_type)}</b></div>
         <div class="summary-line"><ha-icon icon="mdi:numeric"></ha-icon>Aktuell: <b>${esc(live ? live.state : "—")}</b></div>
         <div class="summary-line"><ha-icon icon="mdi:comment-text-outline"></ha-icon>Reason: ${esc(live ? a.reason : "—")}</div>
         <div class="summary-line"><ha-icon icon="mdi:source-branch"></ha-icon>${(d.sources || []).filter((s) => s.entity).length} Quelle(n)</div>
-        ${master ? `<div class="summary-line"><ha-icon icon="mdi:format-list-bulleted-square"></ha-icon>${(d.exposed_attributes || []).length} Master-Attribut(e)</div>` : ""}
+        ${exposesAttrs ? `<div class="summary-line"><ha-icon icon="mdi:format-list-bulleted-square"></ha-icon>${(d.exposed_attributes || []).length} Attribut(e)</div>` : ""}
       </div>
       ${legend ? `<h2 style="margin-top:14px">Code-Legende</h2>${legend}` : ""}
       ${(d.derived || []).length ? `<h2 style="margin-top:14px">Derived</h2>${d.derived.map((x) => `<div class="kv"><span class="k">${esc(x.name || x.slug)}</span><span class="v mono">${esc(x.target)} ${esc(x.op)} ${esc(x.value)}</span></div>`).join("")}` : ""}
@@ -225,7 +225,7 @@ export function render(root, ctx) {
           <h2>Combined erstellen — Vorlage wählen</h2>
           <select id="editPick" style="min-width:200px">
             <option value="">Bestehendes bearbeiten…</option>
-            ${combineds.map((c) => `<option value="${esc(c.slug)}">${isMasterConfig(c.config || {}) ? "[Master] " : ""}${esc(c.display_name || c.slug)}</option>`).join("")}
+            ${combineds.map((c) => `<option value="${esc(c.slug)}">${esc(c.display_name || c.slug)}</option>`).join("")}
           </select>
         </div>
         <div class="tpl-grid">

@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.4.17 - Fix: True Master UX
+
+- Diagnose and header chips now count and render first-class `status.masters` instead of classifying Combineds with exposed attributes as Masters.
+- Import preview shows `master_report` separately from `combined_report`.
+- Combined Builder no longer labels attribute-rich Combineds as `Master/Fusion`; Openings and Media Plug Protection remain Combineds in the UI.
+
+## 0.4.16 - FLEET-108/141: Raw-Source Domain Masters
+
+- Add first-class `masters:` import/export support publishing `sensor.<profile>_master_<slug>`.
+- Keep Masters raw-source only while allowing Combineds to consume published Master outputs.
+- Support `remove_devices`, `remove_combineds`, and `remove_masters` in bulk imports for the domain-master cutover.
+
 ## 0.4.15 - FLEET-130/131: Combined Attribute Sources
 
 - Allow Combined sources to read `state_attr(entity, attribute)` via optional `attribute`, matching device bindings.

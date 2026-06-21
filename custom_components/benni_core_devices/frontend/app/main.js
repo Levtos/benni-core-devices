@@ -132,11 +132,7 @@ class BcdApp extends HTMLElement {
       } else {
         const devices = status.devices || [];
         const combineds = status.combineds || [];
-        const masters = combineds.filter((c) => {
-          const conf = c.config || {};
-          return (conf.exposed_attributes || []).length > 0
-            || (conf.derived_values || []).some((d) => d && d.expose);
-        });
+        const masters = status.masters || [];
         const missing = devices.reduce(
           (n, d) => n + ((d.attrs && d.attrs.missing_required) || []).length, 0);
         const degraded = devices.filter((d) => d.attrs && d.attrs.degraded).length;

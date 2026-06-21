@@ -29,23 +29,40 @@ function reportCard(result) {
     ].join("");
     const dv = r.derived_values ? ` · ${r.derived_values} derived` : "";
     const exposed = (r.exposed_attributes || []).length ? ` · attrs: ${(r.exposed_attributes || []).map(esc).join(", ")}` : "";
-    const master = (r.exposed_attributes || []).length > 0;
     return `<tr>
       <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
-      <td><span class="mono">${esc(r.entity_id)}</span>${master ? ` ${chip("accent", "Master")}` : ""}</td>
-      <td>${master ? "Master/" : ""}${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}${exposed}</td>
+      <td><span class="mono">${esc(r.entity_id)}</span></td>
+      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}${exposed}</td>
+      <td>${issues || `<span class="muted">—</span>`}</td>
+    </tr>`;
+  }).join("");
+  const mRows = (result.master_report || []).map((r) => {
+    const val = r.validation || [];
+    const sev = (r.derived_sources && r.derived_sources.length) || val.length ? "err" : (r.accepted ? "ok" : "warn");
+    const issues = [
+      ...(r.derived_sources || []).map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
+      ...val.map((x) => `<div class="warnbox err" style="margin-top:4px">${esc(x)}</div>`),
+    ].join("");
+    const dv = r.derived_values ? ` · ${r.derived_values} derived` : "";
+    const exposed = (r.exposed_attributes || []).length ? ` · attrs: ${(r.exposed_attributes || []).map(esc).join(", ")}` : "";
+    return `<tr>
+      <td>${chip(sev, r.accepted ? "akzeptiert" : "blockiert")}</td>
+      <td><span class="mono">${esc(r.entity_id)}</span> ${chip("accent", "Master")}</td>
+      <td>${esc(r.output_type)} · ${esc(r.sources)} Quellen${dv}${exposed}</td>
       <td>${issues || `<span class="muted">—</span>`}</td>
     </tr>`;
   }).join("");
   const anyErr = (result.report || []).some((r) => r.derived_sources.length)
-    || (result.combined_report || []).some((r) => r.derived_sources && r.derived_sources.length);
+    || (result.combined_report || []).some((r) => r.derived_sources && r.derived_sources.length)
+    || (result.master_report || []).some((r) => r.derived_sources && r.derived_sources.length);
   return `
     <div class="warnbox ${anyErr ? "err" : ""}" style="margin-top:14px; ${anyErr ? "" : "border-color:var(--line);background:#24262f;color:var(--muted)"}">
       <div class="row spread"><b>${result.dry_run ? "Dry-Run Vorschau" : "Import-Ergebnis"}</b>
-        <span>${chip("info", `${result.devices} Devices`)} ${chip("accent", `${(result.combined_report || []).filter((r) => (r.exposed_attributes || []).length > 0).length} Master`)} ${chip("info", `${result.combineds ?? 0} Combineds`)} ${chip("info", `${result.groups} Groups`)}</span></div>
+        <span>${chip("info", `${result.devices} Devices`)} ${chip("accent", `${result.masters ?? 0} Master`)} ${chip("info", `${result.combineds ?? 0} Combineds`)} ${chip("info", `${result.groups} Groups`)}</span></div>
     </div>
     ${rows ? `<table style="margin-top:8px"><thead><tr><th>Status</th><th>Entity</th><th>Typ</th><th>Hinweise</th></tr></thead><tbody>${rows}</tbody></table>`
       : `<div class="muted" style="margin-top:8px">Keine Devices im Payload.</div>`}
+    ${mRows ? `<h2 style="margin-top:12px;font-size:13px">Master</h2><table><thead><tr><th>Status</th><th>Entity</th><th>Output</th><th>Hinweise</th></tr></thead><tbody>${mRows}</tbody></table>` : ""}
     ${cRows ? `<h2 style="margin-top:12px;font-size:13px">Combineds</h2><table><thead><tr><th>Status</th><th>Entity</th><th>Output</th><th>Hinweise</th></tr></thead><tbody>${cRows}</tbody></table>` : ""}`;
 }
 

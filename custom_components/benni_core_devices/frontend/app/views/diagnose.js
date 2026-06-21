@@ -64,13 +64,6 @@ function categorize(name, type) {
   return "sonstige";
 }
 
-function isMasterCombined(c) {
-  const conf = c.config || {};
-  const exposed = conf.exposed_attributes || [];
-  const derivedValues = conf.derived_values || [];
-  return exposed.length > 0 || derivedValues.some((d) => d && d.expose);
-}
-
 function rows(status) {
   const out = [];
   for (const d of status.devices || []) {
@@ -98,13 +91,12 @@ function rows(status) {
   }
   for (const c of status.combineds || []) {
     const a = c.attrs || {};
-    const master = isMasterCombined(c);
     const severity = a.degraded ? "warn" : (c.state == null ? "err" : "ok");
-    const cat = categorize(c.display_name || c.slug, `${master ? "master fusion" : "combined"} ${c.output_type || ""}`);
+    const cat = categorize(c.display_name || c.slug, `combined ${c.output_type || ""}`);
     const row = {
-      kind: master ? "master" : "combined", key: `combined:${c.slug}`, slug: c.slug,
+      kind: "combined", key: `combined:${c.slug}`, slug: c.slug,
       name: c.display_name || c.slug,
-      type: `${master ? "master" : "combined"}/${c.output_type || "enum"}`,
+      type: `combined/${c.output_type || "enum"}`,
       state: c.state,
       available: a.degraded ? "degraded" : "ok",
       missing: (a.missing_sources || []).length,
@@ -115,8 +107,32 @@ function rows(status) {
       cat, catLabel: CAT_LABEL[cat],
       sources: a.source_entities || {},
       entityId: c.entity_id,
-      master,
+      master: false,
       data: c,
+    };
+    row.haystack = buildHaystack(row);
+    out.push(row);
+  }
+  for (const m of status.masters || []) {
+    const a = m.attrs || {};
+    const severity = a.degraded ? "warn" : (m.state == null ? "err" : "ok");
+    const cat = categorize(m.display_name || m.slug, `master ${m.output_type || ""}`);
+    const row = {
+      kind: "master", key: `master:${m.slug}`, slug: m.slug,
+      name: m.display_name || m.slug,
+      type: `master/${m.output_type || "enum"}`,
+      state: m.state,
+      available: a.degraded ? "degraded" : "ok",
+      missing: (a.missing_sources || []).length,
+      reason: a.reason || "—",
+      severity,
+      degraded: !!a.degraded,
+      availGood: !a.degraded && m.state != null,
+      cat, catLabel: CAT_LABEL[cat],
+      sources: a.source_entities || {},
+      entityId: m.entity_id,
+      master: true,
+      data: m,
     };
     row.haystack = buildHaystack(row);
     out.push(row);
@@ -232,10 +248,10 @@ function detailCard(row) {
     <div class="card">
       <div class="section-head"><h2>${esc(row.name)}</h2>${typeChip}</div>
       <div class="kv"><span class="k">Sensor</span><span class="v mono">${esc(d.entity_id)}</span></div>
-      <div class="kv"><span class="k">Typ</span><span class="v">${esc(row.master ? "Master/Fusion" : "Combined")}</span></div>
+      <div class="kv"><span class="k">Typ</span><span class="v">${esc(row.master ? "Master" : "Combined")}</span></div>
       <div class="kv"><span class="k">Output</span><span class="v">${esc(d.state)}</span></div>
       <div class="kv"><span class="k">Reason</span><span class="v">${esc(a.reason)}</span></div>
-      ${exposedRows ? `<h2 style="margin-top:16px">Master Attribute</h2>${exposedRows}` : ""}
+      ${exposedRows ? `<h2 style="margin-top:16px">${row.master ? "Master Attribute" : "Attribute"}</h2>${exposedRows}` : ""}
       <h2 style="margin-top:16px">Quellen</h2>
       ${srcRows || `<div class="muted">Keine Quellen.</div>`}
       ${legend ? `<h2 style="margin-top:16px">Code-Legende</h2>${legend}` : ""}
@@ -285,10 +301,10 @@ export function render(root, ctx) {
   }
   const devices = status.devices || [];
   const combineds = status.combineds || [];
-  const masters = combineds.filter(isMasterCombined);
+  const masters = status.masters || [];
 
   // Empty-State: freundlicher Einstieg statt nackter Nullen.
-  if (!devices.length && !combineds.length) {
+  if (!devices.length && !combineds.length && !masters.length) {
     root.innerHTML = `
       ${emptyState()}
       <div class="stats secondary" style="margin-top:18px">

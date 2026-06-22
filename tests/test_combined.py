@@ -119,6 +119,35 @@ def test_missing_source_when_entity_empty():
     assert res.degraded is True
 
 
+def test_optional_source_unavailable_does_not_degrade():
+    cfg = CB.CombinedConfig(
+        slug="m", display_name="M",
+        sources=(
+            CB.CombinedSource(key="required", role="custom", entity="sensor.required"),
+            CB.CombinedSource(
+                key="optional",
+                role="custom",
+                entity="binary_sensor.optional",
+                required=False,
+            ),
+        ),
+        rules=(),
+        default_output="ok",
+    )
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "required": _r("on"),
+            "optional": _r(None, available=False),
+        },
+    )
+
+    assert res.state == "ok"
+    assert res.source_available["optional"] is False
+    assert res.degraded is False
+    assert res.degraded_reason == []
+
+
 # ── Derived binary sensors ───────────────────────────────────────────────────
 
 
@@ -203,7 +232,11 @@ def test_parse_combined_roundtrip():
         "output_type": "code",
         "sources": [
             {"key": "open", "role": "open_contact", "entity": "binary_sensor.o"},
-            {"role": "tilt_contact", "entity": "binary_sensor.t"},  # key from role
+            {
+                "role": "tilt_contact",
+                "entity": "binary_sensor.t",
+                "required": False,
+            },  # key from role
         ],
         "rules": [
             {"source": "open", "op": "unavailable", "output": 9},
@@ -225,6 +258,7 @@ def test_parse_combined_roundtrip():
     assert cfg.output_type == "code"
     assert len(cfg.sources) == 2
     assert cfg.sources[1].key == "tilt_contact"
+    assert cfg.sources[1].required is False
     assert len(cfg.rules) == 2  # invalid op skipped
     assert cfg.derived[0].slug == "any_open"
     assert cfg.derived[0].object_id == "legacy_any_open"

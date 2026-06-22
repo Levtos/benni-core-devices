@@ -77,6 +77,7 @@ class CombinedSource:
     role: str         # fachliche Rolle (open_contact, tilt_contact, ...)
     entity: str | None = None  # Raw-Entity-ID
     attribute: str | None = None  # optional: state_attr(entity, attribute) statt State
+    required: bool = True  # false = opportunistische Quelle, keine Degradation
 
 
 @dataclass(frozen=True)
@@ -452,6 +453,8 @@ def evaluate_combined(
 
     for src in config.sources:
         if not src.entity:
+            if not src.required:
+                continue
             missing_sources.append(src.key)
             continue
         source_entities[src.key] = src.entity
@@ -459,7 +462,7 @@ def evaluate_combined(
         available = reading is not None and reading.available and reading.value is not None
         source_states[src.key] = reading.value if reading else None
         source_available[src.key] = available
-        if not available:
+        if not available and src.required:
             degraded_reason.append(f"{src.key}: unavailable")
 
     prev_state = persisted.last_state if persisted else None
@@ -670,6 +673,7 @@ def parse_combined(slug: str, raw: Any) -> CombinedConfig | None:
                     if item.get("attribute")
                     else None
                 ),
+                required=bool(item.get("required", True)),
             )
         )
 

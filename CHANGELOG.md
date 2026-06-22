@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.4.18 - FLEET-147: Optional Master Sources
+
+- Allow Combined/Master sources to set `required: false` so opportunistic raw signals can be exposed without degrading the master when unavailable.
+- Keep required-source behavior unchanged by default and add regression coverage for optional unavailable sources.
+
 ## 0.4.17 - Fix: True Master UX
 
 - Diagnose and header chips now count and render first-class `status.masters` instead of classifying Combineds with exposed attributes as Masters.

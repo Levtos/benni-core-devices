@@ -321,6 +321,9 @@ def compute_device(
     assumed_source = _is_assumed(integration_reading) or _is_assumed(state_reading)
     assumed_unreliable = assumed_source and watt_fresh
     effective_watt_primary = watt_primary or assumed_unreliable
+    # assumed ohne Watt: Integration rät nur, aber kein Watt-Sensor kann das bestätigen
+    # oder widerlegen → Reading komplett verwerfen (fällt durch zu Sticky/Unknown).
+    assumed_no_watt = assumed_source and not watt_fresh
 
     # ── power_state: immer aus Watt (R-DC-06)
     power_state = classify_power_state(watt, config.watt_buckets)
@@ -377,7 +380,7 @@ def compute_device(
             )
             powered = True if held else False
             source = PowerSource.STICKY_HOLD if held else PowerSource.WATT_PRIMARY
-    elif integration_fresh and integration_bool is not None:
+    elif not assumed_no_watt and integration_fresh and integration_bool is not None:
         powered = integration_bool
         source = PowerSource.INTEGRATION
         if watt_on:
@@ -422,8 +425,12 @@ def compute_device(
     # überstimmt wurde, ist der geratene Player-State („off") wertlos → State
     # aus der realen Leistung ableiten, sonst läse media_state das Atomic trotz
     # 440 W als „off" (FLEET-83).
+    # assumed_no_watt: Kein Watt zum Verifizieren → raw webOS-State ebenso unbrauchbar,
+    # State nur aus powered ableiten (on/off/unavailable, kein „playing"-Phantom).
     if assumed_unreliable:
         state = _state_from_power(power_state, powered)
+    elif assumed_no_watt:
+        state = _compute_state(None, powered, None)
     else:
         state = _compute_state(state_reading, powered, inputs.state_slot)
 

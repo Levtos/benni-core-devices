@@ -887,14 +887,19 @@ def test_assumed_player_off_zero_watt_does_not_sticky_hold():
 
 
 def test_assumed_player_stale_watt_falls_back_to_player():
-    """Ohne frischen Watt-Wert bleibt nur die (geratene) Player-Quelle — keine
-    watt-primäre Übersteuerung, alte Hierarchie greift."""
+    """assumed_state ohne Watt: Integration-Reading wird verworfen (kann nicht
+    verifiziert werden) → powered=None, state='unavailable', source='none'.
+
+    Vorher (altes Verhalten): Integration-Reading wurde trotzdem genutzt → TV
+    blieb als 'on' hängen wenn webOS einen assumed-state lieferte, obwohl kein
+    Plug-Watt-Sensor mehr angeschlossen war (FLEET-83 Anschluss).
+    """
     cfg = _config(threshold=50)
     inp = _media_inputs("off", None, assumed=True)
     r = L.compute_device(cfg, inp, _persisted(), NOW)
-    assert r.powered is False  # Player „off" via Integration
-    assert r.power_source == C.PowerSource.INTEGRATION.value
-    assert r.state == "off"
+    assert r.powered is None  # assumed ohne Watt = unzuverlässig → verworfen
+    assert r.power_source == C.PowerSource.NONE.value
+    assert r.state == "unavailable"
 
 
 def test_non_assumed_player_keeps_integration_first():

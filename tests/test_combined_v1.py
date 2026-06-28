@@ -340,6 +340,151 @@ def test_combined_master_can_publish_entity_attribute_sources():
     }
 
 
+def test_living_rollo_master_contract_exposes_raw_context_cover_and_plug_facts():
+    raw = {
+        "display_name": "Living Blind",
+        "output_type": "enum",
+        "sources": [
+            {"key": "cover_state", "role": "cover_state", "entity": "cover.wohnbereich_thermo_verdunklungsrollo"},
+            {
+                "key": "current_position",
+                "role": "cover_position",
+                "entity": "cover.wohnbereich_thermo_verdunklungsrollo",
+                "attribute": "current_position",
+            },
+            {"key": "battery", "role": "cover_battery", "entity": "sensor.wohnbereich_thermo_verdunklungsrollo_battery"},
+            {"key": "charging", "role": "cover_charging", "entity": "binary_sensor.wohnbereich_thermo_verdunklungsrollo_charging_status"},
+            {"key": "running", "role": "cover_running", "entity": "binary_sensor.wohnbereich_thermo_verdunklungsrollo_running"},
+            {"key": "living_left_open", "role": "opening_contact", "entity": "binary_sensor.living_window_left_open_contact"},
+            {"key": "living_left_tilt", "role": "tilt_contact", "entity": "binary_sensor.living_window_left_tilt_contact"},
+            {"key": "living_right_open", "role": "opening_contact", "entity": "binary_sensor.living_window_right_open_contact"},
+            {"key": "living_right_tilt", "role": "tilt_contact", "entity": "binary_sensor.living_window_right_tilt_contact"},
+            {"key": "source_bio_state", "role": "policy_bio_state", "entity": "sensor.benni_core_state_bio_state"},
+            {"key": "source_day_state", "role": "policy_day_state", "entity": "sensor.benni_core_state_day_state"},
+            {"key": "source_day_context", "role": "policy_day_context", "entity": "sensor.benni_core_state_day_context"},
+            {"key": "source_presence_household", "role": "policy_presence_household", "entity": "sensor.benni_core_state_presence_household"},
+            {"key": "source_lux", "role": "policy_lux", "entity": "sensor.garden_light_sensor_illuminance"},
+            {"key": "source_sun_state", "role": "sun_state", "entity": "sun.sun"},
+            {"key": "source_sun_elevation", "role": "policy_sun_elevation", "entity": "sun.sun", "attribute": "elevation"},
+            {"key": "source_media_scenario", "role": "policy_media_scenario", "entity": "sensor.benni_media_state_media_context"},
+            {"key": "source_gaming_source", "role": "policy_gaming_source", "entity": "sensor.benni_media_state_gaming_source"},
+            {"key": "source_weather_condition", "role": "policy_weather_condition", "entity": "weather.dwd_home"},
+            {"key": "source_outdoor_temp", "role": "policy_outdoor_temp", "entity": "sensor.climate_effective_outdoor_temperature"},
+            {"key": "plug_switch", "role": "charger_switch", "entity": "switch.living_blind_plug"},
+            {"key": "plug_decision", "role": "plug_policy_decision", "entity": "sensor.rollo_lader_rollo_lader_decision"},
+            {
+                "key": "plug_desired",
+                "role": "plug_policy_desired",
+                "entity": "sensor.rollo_lader_rollo_lader_decision",
+                "attribute": "desired_switch_state",
+            },
+        ],
+        "derived_values": [
+            {"name": "cover_entity_id", "kind": "enum", "default": "cover.wohnbereich_thermo_verdunklungsrollo", "expose": True},
+            {"name": "current_cover_position", "kind": "expr", "expr": "${current_position}", "expose": True},
+            {
+                "name": "opening_state",
+                "kind": "enum",
+                "cases": [
+                    {"when": "${living_left_open} == \"on\" or ${living_right_open} == \"on\"", "output": "open"},
+                    {"when": "${living_left_tilt} == \"on\" or ${living_right_tilt} == \"on\"", "output": "tilted"},
+                ],
+                "default": "closed",
+                "expose": True,
+            },
+            {"name": "window_open", "kind": "gate", "expr": "${opening_state} == \"open\"", "expose": True},
+            {"name": "bio_state", "kind": "enum", "default": "${source_bio_state}", "expose": True},
+            {"name": "day_state", "kind": "enum", "default": "${source_day_state}", "expose": True},
+            {"name": "day_context", "kind": "enum", "default": "${source_day_context}", "expose": True},
+            {"name": "presence_household", "kind": "enum", "default": "${source_presence_household}", "expose": True},
+            {"name": "lux", "kind": "expr", "expr": "${source_lux}", "expose": True},
+            {"name": "sun_elevation", "kind": "expr", "expr": "${source_sun_elevation}", "expose": True},
+            {"name": "sun_state", "kind": "enum", "default": "${source_sun_state}", "expose": True},
+            {"name": "media_scenario", "kind": "enum", "default": "${source_media_scenario}", "expose": True},
+            {"name": "gaming_source", "kind": "enum", "default": "${source_gaming_source}", "expose": True},
+            {"name": "weather_condition", "kind": "enum", "default": "${source_weather_condition}", "expose": True},
+            {"name": "outdoor_temp", "kind": "expr", "expr": "${source_outdoor_temp}", "expose": True},
+            {
+                "name": "heat_candidate",
+                "kind": "gate",
+                "expr": "${source_weather_condition} == \"sunny\" and ${source_outdoor_temp} != null and ${source_outdoor_temp} >= 24 and ${source_sun_elevation} != null and ${source_sun_elevation} > 5 and any([${source_day_state} == \"late_morning\", ${source_day_state} == \"forenoon\", ${source_day_state} == \"afternoon\"])",
+                "expose": True,
+            },
+            {"name": "battery_pct", "kind": "expr", "expr": "${battery}", "expose": True},
+            {"name": "charging_active", "kind": "gate", "expr": "${charging} == \"on\"", "expose": True},
+            {"name": "cover_running", "kind": "gate", "expr": "${running} == \"on\" or ${cover_state} == \"opening\" or ${cover_state} == \"closing\"", "expose": True},
+            {"name": "plug_switch_on", "kind": "gate", "expr": "${plug_switch} == \"on\"", "expose": True},
+            {"name": "plug_policy_decision", "kind": "enum", "default": "${plug_decision}", "expose": True},
+            {"name": "plug_desired_switch_state", "kind": "enum", "default": "${plug_desired}", "expose": True},
+        ],
+        "rules": [
+            {"source": "cover_state", "op": "unavailable", "output": "blocked", "reason": "cover_unavailable"},
+            {"source": "opening_state", "op": "eq", "value": "open", "output": "window_open", "reason": "living_window_open"},
+        ],
+        "default_output": "ready",
+        "default_reason": "blind_master_ready",
+    }
+
+    cfg = CB.parse_combined("living_rollo", raw)
+    assert cfg is not None
+    assert CB.validate_combined_v1(cfg) == []
+
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "cover_state": _r("open"),
+            "current_position": _r(60, numeric=60.0),
+            "battery": _r("83", numeric=83.0),
+            "charging": _r("on"),
+            "running": _r("off"),
+            "living_left_open": _r("off"),
+            "living_left_tilt": _r("off"),
+            "living_right_open": _r("off"),
+            "living_right_tilt": _r("off"),
+            "source_bio_state": _r("awake"),
+            "source_day_state": _r("afternoon"),
+            "source_day_context": _r("werktag"),
+            "source_presence_household": _r("nicht_leer"),
+            "source_lux": _r("25000", numeric=25000.0),
+            "source_sun_state": _r("above_horizon"),
+            "source_sun_elevation": _r("18", numeric=18.0),
+            "source_media_scenario": _r("idle"),
+            "source_gaming_source": _r("none"),
+            "source_weather_condition": _r("sunny"),
+            "source_outdoor_temp": _r("26", numeric=26.0),
+            "plug_switch": _r("on"),
+            "plug_decision": _r("keep"),
+            "plug_desired": _r("off"),
+        },
+    )
+
+    assert res.state == "ready"
+    assert CB.exposed_derived_attributes(cfg, res) == {
+        "cover_entity_id": "cover.wohnbereich_thermo_verdunklungsrollo",
+        "current_cover_position": 60.0,
+        "opening_state": "closed",
+        "window_open": False,
+        "bio_state": "awake",
+        "day_state": "afternoon",
+        "day_context": "werktag",
+        "presence_household": "nicht_leer",
+        "lux": 25000.0,
+        "sun_elevation": 18.0,
+        "sun_state": "above_horizon",
+        "media_scenario": "idle",
+        "gaming_source": "none",
+        "weather_condition": "sunny",
+        "outdoor_temp": 26.0,
+        "heat_candidate": True,
+        "battery_pct": 83.0,
+        "charging_active": True,
+        "cover_running": False,
+        "plug_switch_on": True,
+        "plug_policy_decision": "keep",
+        "plug_desired_switch_state": "off",
+    }
+
+
 def test_exposed_derived_attributes_validate_names_and_reserved_keys():
     unknown = _cfg(
         sources=(_src("a"),),

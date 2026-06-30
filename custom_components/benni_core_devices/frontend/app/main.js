@@ -1,21 +1,25 @@
 import { CSS, chip, esc } from "./styles.js";
 import { Store } from "./store.js";
+import * as contracts from "./views/contracts.js";
+import * as rawCatalog from "./views/raw_catalog.js";
 import * as diagnose from "./views/diagnose.js";
 import * as builder from "./views/builder.js";
 import * as combined from "./views/combined.js";
 import * as importExport from "./views/import_export.js";
 
 const VIEWS = {
+  contracts: { label: "Contracts / Masters", icon: "mdi:file-tree-outline", view: contracts },
+  raw_catalog: { label: "Raw Catalog", icon: "mdi:database-search-outline", view: rawCatalog },
   diagnose: { label: "Diagnose", icon: "mdi:stethoscope", view: diagnose },
-  builder: { label: "Atomic Builder", icon: "mdi:cube-outline", view: builder },
-  combined: { label: "Combined Builder", icon: "mdi:set-merge", view: combined, expert: true },
+  builder: { label: "Legacy Atomic Builder", icon: "mdi:cube-outline", view: builder, expert: true },
+  combined: { label: "Legacy Combined Builder", icon: "mdi:set-merge", view: combined, expert: true },
   import_export: { label: "Import / Export", icon: "mdi:swap-vertical", view: importExport, expert: true },
 };
 
 // Sidebar-Gruppen: Standard (geringe kognitive Last) vs. Experte.
 const NAV_GROUPS = [
-  { label: null, ids: ["diagnose", "builder"] },
-  { label: "Experte", ids: ["combined", "import_export"] },
+  { label: null, ids: ["contracts", "raw_catalog", "diagnose"] },
+  { label: "Legacy / Experte", ids: ["builder", "combined", "import_export"] },
 ];
 
 // Views mit Form-Draft, die nicht bei jedem Live-Refresh neu gerendert werden.
@@ -26,7 +30,7 @@ class BcdApp extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._store = new Store();
-    this._view = "diagnose";
+    this._view = "contracts";
     this._booted = false;
     this._hass = null;
     this._poll = null;
@@ -103,7 +107,7 @@ class BcdApp extends HTMLElement {
         <aside class="sidebar">
           <div class="brand">
             <div class="logo"><ha-icon icon="mdi:atom"></ha-icon></div>
-            <div><b>Benni Core Devices</b><small>Atomic-Werkstatt</small></div>
+            <div><b>Benni Core Devices</b><small>Core Devices Workbench</small></div>
           </div>
           <nav class="nav">${nav}</nav>
           <div class="sb-foot" id="foot">benni_core_devices</div>
@@ -111,7 +115,7 @@ class BcdApp extends HTMLElement {
         <main class="main">
           <div class="head">
             <div>
-              <h1 id="title">Diagnose</h1>
+              <h1 id="title">Contracts / Masters</h1>
               <div class="sub" id="subtitle"></div>
             </div>
             <div class="chips" id="chips"></div>
@@ -142,9 +146,9 @@ class BcdApp extends HTMLElement {
         chips.innerHTML = [
           chip("info", `v${version}`),
           chip("accent", `Route: ${status.profile_label || status.profile || "?"}`),
-          chip(devices.length ? "info" : "warn", `Devices ${devices.length}`),
+          chip(devices.length ? "info" : "warn", `Legacy Devices ${devices.length}`),
           masters.length ? chip("accent", `Master ${masters.length}`) : "",
-          chip("info", `Combined ${combineds.length}`),
+          chip("info", `Legacy Combined ${combineds.length}`),
           missing ? chip("warn", `Missing ${missing}`) : "",
           degraded ? chip("warn", `Degraded ${degraded}`) : "",
           chip("ok", `Ready ${ready}`),

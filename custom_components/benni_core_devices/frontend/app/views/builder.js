@@ -205,12 +205,16 @@ export function render(root, ctx) {
   const rrow = (role) => roleRow(role, effSpec(role));
 
   root.innerHTML = `
+    <div class="card muted-card" style="margin-bottom:14px">
+      <div class="row"><ha-icon icon="mdi:archive-alert-outline"></ha-icon>
+        <span class="muted" style="font-size:12px">Legacy-/Expertenbereich. Atomics bleiben nur für Kompatibilität und Migration sichtbar. Der Zielpfad für v1 sind Masters/Contracts; neue Fachlogik sollte dort geplant werden.</span></div>
+    </div>
     <div class="split">
       <div>
         <form id="deviceForm" class="form">
           <div class="row spread" style="margin-bottom:4px">
             <div class="row">
-              <button class="btn ${d.slug ? "" : "primary"} small" type="button" id="modeNew">Neues Atomic</button>
+              <button class="btn ${d.slug ? "" : "primary"} small" type="button" id="modeNew">Neues Legacy Atomic</button>
               <select id="editPick" style="min-width:200px">
                 <option value="">Bestehendes bearbeiten…</option>
                 ${devices.map((dev) => `<option value="${esc(dev.slug)}" ${dev.slug === d.slug ? "selected" : ""}>${esc((dev.config && dev.config.display_name) || dev.slug)}</option>`).join("")}
@@ -220,7 +224,7 @@ export function render(root, ctx) {
           </div>
 
           <div class="step primary-step">
-            <div class="step-head"><span class="num">1</span><div><h3>Was willst du bauen?</h3><small>Geräteklasse &amp; Variante</small></div></div>
+            <div class="step-head"><span class="num">1</span><div><h3>Legacy Atomic</h3><small>Geräteklasse &amp; Variante für bestehende Kompatibilität</small></div></div>
             <label>Name<input name="display_name" value="${esc(d.display_name)}" placeholder="z. B. Wohnzimmer TV" required></label>
             <div class="type-grid" style="margin-top:10px">
               ${(catalog.atomic_classes || []).map((c) =>
@@ -278,7 +282,7 @@ export function render(root, ctx) {
           </details>
 
           <div class="row">
-            <button class="btn primary" type="submit">${d.slug ? "Speichern" : "Atomic anlegen"}</button>
+            <button class="btn primary" type="submit">${d.slug ? "Speichern" : "Legacy Atomic anlegen"}</button>
             <button class="btn" type="button" id="resetForm">${d.slug ? "Abbrechen" : "Zurücksetzen"}</button>
             ${d.slug ? `<button class="btn danger" type="button" id="deleteDevice">Löschen</button>` : ""}
           </div>
@@ -327,7 +331,7 @@ export function render(root, ctx) {
   if (del) del.addEventListener("click", async () => {
     await ctx.store.removeDevice(d.slug);
     root._draft = newDraft(catalog);
-    ctx.toast("Atomic gelöscht"); ctx.rerender();
+    ctx.toast("Legacy Atomic gelöscht"); ctx.rerender();
   });
 
   form.addEventListener("submit", async (ev) => {
@@ -353,7 +357,7 @@ export function render(root, ctx) {
       expose_secondary_sensors: d.expose_secondary_sensors, watt_buckets: d.watt_buckets,
     });
     root._draft = newDraft(catalog);
-    ctx.toast((res && res.warnings && res.warnings.length) ? `Gespeichert · ${res.warnings.length} Warnung(en)` : "Atomic gespeichert");
+    ctx.toast((res && res.warnings && res.warnings.length) ? `Gespeichert · ${res.warnings.length} Warnung(en)` : "Legacy Atomic gespeichert");
     ctx.rerender();
   });
 }

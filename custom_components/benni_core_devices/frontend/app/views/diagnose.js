@@ -6,9 +6,9 @@ import { chip, esc, qualityKind } from "../styles.js";
 
 const TYPE_FILTERS = [
   ["all", "Alle"],
-  ["device", "Atomics"],
-  ["master", "Master"],
-  ["combined", "Combineds"],
+  ["device", "Legacy Atomics"],
+  ["master", "Masters / Contracts"],
+  ["combined", "Legacy Combineds"],
 ];
 
 const STATUS_FILTERS = [
@@ -180,12 +180,12 @@ function emptyState() {
   return `
     <div class="hero">
       <div class="hicon"><ha-icon icon="mdi:atom-variant"></ha-icon></div>
-      <h2>Noch keine Atomics angelegt</h2>
-      <p>Diese Werkstatt verwandelt rohe Entities in saubere Device-Atomics und Combined-Logiken. Starte mit deinem ersten Atomic — der Rest folgt geführt.</p>
+      <h2>Noch keine Core-Devices-Contracts vorhanden</h2>
+      <p>Core Devices wird als Contract Layer stabilisiert. Masters sind der Zielpfad; Atomic- und Combined-Builder bleiben vorerst Legacy-/Expertenwerkzeuge.</p>
       <div class="actions">
-        <button class="btn primary big" data-go="builder"><ha-icon icon="mdi:plus"></ha-icon> Atomic anlegen</button>
-        <button class="btn big" data-go="import_export">Import starten</button>
-        <button class="btn ghost big" data-go="combined">Combined später erstellen</button>
+        <button class="btn primary big" data-go="import_export">Import starten</button>
+        <button class="btn big" data-go="builder"><ha-icon icon="mdi:cube-outline"></ha-icon> Legacy Atomic öffnen</button>
+        <button class="btn ghost big" data-go="combined">Legacy Combined öffnen</button>
       </div>
     </div>`;
 }
@@ -222,7 +222,7 @@ function detailCard(row) {
         ${slotRows || `<div class="muted">Keine belegten Quellen.</div>`}
         <h2 style="margin-top:16px">Versorgung / Abhängigkeiten</h2>
         <div class="kv"><span class="k">consumes</span><span class="v">${consumes || "—"}</span></div>
-        <div style="margin-top:8px"><div class="k">Verwendet in Combineds</div><div class="row" style="margin-top:6px">${consumedBy || `<span class="muted">—</span>`}</div></div>
+        <div style="margin-top:8px"><div class="k">Verwendet in Legacy Combineds</div><div class="row" style="margin-top:6px">${consumedBy || `<span class="muted">—</span>`}</div></div>
       </div>`;
   }
   const srcEntities = a.source_entities || {};
@@ -248,7 +248,7 @@ function detailCard(row) {
     <div class="card">
       <div class="section-head"><h2>${esc(row.name)}</h2>${typeChip}</div>
       <div class="kv"><span class="k">Sensor</span><span class="v mono">${esc(d.entity_id)}</span></div>
-      <div class="kv"><span class="k">Typ</span><span class="v">${esc(row.master ? "Master" : "Combined")}</span></div>
+      <div class="kv"><span class="k">Typ</span><span class="v">${esc(row.master ? "Master / Contract" : "Legacy Combined")}</span></div>
       <div class="kv"><span class="k">Output</span><span class="v">${esc(d.state)}</span></div>
       <div class="kv"><span class="k">Reason</span><span class="v">${esc(a.reason)}</span></div>
       ${exposedRows ? `<h2 style="margin-top:16px">${row.master ? "Master Attribute" : "Attribute"}</h2>${exposedRows}` : ""}
@@ -308,8 +308,8 @@ export function render(root, ctx) {
     root.innerHTML = `
       ${emptyState()}
       <div class="stats secondary" style="margin-top:18px">
-        <div class="stat"><div class="n">0</div><div class="l">Devices</div></div>
-        <div class="stat"><div class="n">0</div><div class="l">Combineds</div></div>
+        <div class="stat"><div class="n">0</div><div class="l">Legacy Devices</div></div>
+        <div class="stat"><div class="n">0</div><div class="l">Legacy Combineds</div></div>
         <div class="stat"><div class="n">0</div><div class="l">Ready</div></div>
       </div>`;
     root.querySelectorAll("[data-go]").forEach((b) =>
@@ -348,7 +348,7 @@ export function render(root, ctx) {
   const selectedVisible = !!visible.find((r) => r.key === root._sel);
 
   const attentionBanner = attention
-    ? `<div class="warnbox" style="margin-bottom:14px"><b>${attention}</b> Atomic(s) brauchen Aufmerksamkeit — oben in der Liste.</div>`
+    ? `<div class="warnbox" style="margin-bottom:14px"><b>${attention}</b> Contract-/Legacy-Eintrag(e) brauchen Aufmerksamkeit — oben in der Liste.</div>`
     : `<div class="okbox" style="margin-bottom:14px">Alles in Ordnung — keine fehlenden oder degradierten Quellen.</div>`;
 
   const chipRow = (label, items, attr, active) => `
@@ -367,9 +367,9 @@ export function render(root, ctx) {
 
   root.innerHTML = `
     <div class="stats">
-      <div class="stat accent"><div class="n">${devices.length}</div><div class="l">Devices</div></div>
-      <div class="stat accent"><div class="n">${masters.length}</div><div class="l">Master</div></div>
-      <div class="stat info"><div class="n">${combineds.length}</div><div class="l">Combineds</div></div>
+      <div class="stat accent"><div class="n">${devices.length}</div><div class="l">Legacy Devices</div></div>
+      <div class="stat accent"><div class="n">${masters.length}</div><div class="l">Masters</div></div>
+      <div class="stat info"><div class="n">${combineds.length}</div><div class="l">Legacy Combineds</div></div>
       <div class="stat ${missing ? "warn" : "ok"}"><div class="n">${missing}</div><div class="l">Missing Required</div></div>
       <div class="stat ${degraded ? "warn" : "ok"}"><div class="n">${degraded}</div><div class="l">Degraded</div></div>
       <div class="stat ok"><div class="n">${ready}</div><div class="l">Ready</div></div>

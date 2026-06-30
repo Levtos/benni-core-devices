@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.5.0-alpha.1 - Contract Workbench Alpha
+
+- Core Devices UI semantisch auf Contract Workbench ausgerichtet.
+- Atomic/Combined Builder als Legacy-/Expert-Bereiche markiert.
+- Read-only Contract Catalog WebSocket API ergaenzt.
+- Read-only Contracts/Masters UI ergaenzt.
+- Read-only Raw Entity Catalog WebSocket API ergaenzt.
+- Read-only Raw Catalog UI ergaenzt.
+- Import Dry-Run-/Apply-Reports um Quelle, SHA256, Summary, Version und Rollback-Hinweis erweitert.
+- Agent-/Architektur-Briefing auf neue Contract-Layer-Regeln aktualisiert.
+- Keine neuen Sensoren.
+- Keine Master-Migration.
+- Keine Legacy-Loeschung.
+- Kein `master_opening`.
+
 ## 0.4.18 - FLEET-147: Optional Master Sources
 
 - Allow Combined/Master sources to set `required: false` so opportunistic raw signals can be exposed without degrading the master when unavailable.

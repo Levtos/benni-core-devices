@@ -1,22 +1,81 @@
 # Master Contract Rollout
 
-Last updated: 2026-06-21
-Scope: FLEET-108 / FLEET-129
+Last updated: 2026-06-22
+Scope: FLEET-108 / FLEET-129 / FLEET-146
 
 ## Purpose
 
 Openings proved the master-contract model, but the next rollout must not be
-cut by integration name. The primary cut is a real device or a real smart-home
-function with its own identity.
+cut by integration name, entity count, or device parts. A Master exists only
+when there is an independent smart-home truth worth owning centrally.
 
 Rule:
 
-- Device/function masters own raw quirks and device-specific facts.
-- Domain masters are later, smaller facades that consume device/function
-  masters and expose domain-wide truth.
+- Masters own raw quirks and normalize them into a stable contract.
+- A Master needs independent domain truth, stable sources, policy relevance,
+  and real consumers.
+- Dependent components are usually attributes or policy outputs, not
+  standalone Masters.
+- Domain facades are later, smaller surfaces that consume Masters and expose
+  domain-wide truth.
 - A domain facade must not become a 100+ attribute bucket.
 - Existing single Combineds may stay as compatibility surfaces during a
   migration, but they are not the target architecture.
+
+## Master-Zuschnitt v2
+
+Use this decision matrix for every new Master proposal.
+
+| Criterion | Required signal |
+| --- | --- |
+| Independent truth | The object has its own observed state, activity, or safety fact that is not merely derived from another Master. |
+| Stable sources | The source set can be named and monitored directly, preferably raw HA entities or integration-owned policy entities. |
+| Policy relevance | At least one downstream policy/apply/readiness decision needs the normalized truth. |
+| Real consumers | More than one consumer exists, or one critical consumer needs a contract that should not know raw quirks. |
+| Failure semantics | The safe degraded state can be defined loudly instead of silently guessing. |
+
+Do not create a Master when the proposed object is only:
+
+- a plug or watt detail of an already-owned device;
+- a child component whose truth is fully owned by another domain, such as a
+  subwoofer that follows Denon/audio policy;
+- a UI convenience grouping with no independent state;
+- a temporary compatibility shim for a migration;
+- a single integration's private derived value with no cross-consumer contract.
+
+When a proposal fails the matrix, put the value on the owning Master as an
+attribute, expose it from the owning policy integration, or leave it as a
+Combined compatibility surface until FLEET-149 retires it.
+
+### Current Classification
+
+| Contract | Classification | Decision |
+| --- | --- | --- |
+| PC | Master | Keep. Owns PC power/activity/protection truth with multiple consumers. |
+| TV | Master | Keep. Owns WebOS/watt fallback and protection semantics. |
+| PS5 | Master | Keep. Owns console activity, gaming context, and protection facts. |
+| Switch | Master | Keep. Owns dock/presence/watt activity and gaming context. |
+| Denon | Master | Keep. Owns AVR activity, audio path, and protection facts. |
+| HomePods | Master | Keep. Owns MA group playback, radio/manual playback, and route health. |
+| Openings | Function/domain master | Keep. Owns opening safety truth consumed by climate, rollo, and readiness. |
+| Media plug protection | Combined/domain facade | Keep as facade, not a standalone device Master. |
+| Apple TV | Decision open | Evaluate as TV-dependent before deciding whether it needs a standalone Master. |
+| Subwoofer | Decision open | Evaluate as Denon-dependent, because it is active only in dependency with Denon. |
+
+### Candidate Notes
+
+Apple TV currently appears as `sensor.benni_device_living_appletv`, and media
+contracts can classify it through values such as `media_device=appletv`,
+`media_context=streaming`, and app/subcontext logic. The open question for
+FLEET-147 is whether this should remain a TV/media-dependent source or whether
+there is an independent, cross-domain truth that justifies a standalone Master.
+
+Subwoofer currently has a switch and old device contract
+`sensor.benni_device_living_subwoofer_plug`. Benni's working model is that the
+Subwoofer is always active in dependency with Denon. FLEET-148 should therefore
+evaluate a Denon-linked contract first: e.g. Denon Master attributes, a
+Denon/audio-policy output, or another explicit dependency surface. A standalone
+Subwoofer Master should only be proposed if independent truth is found.
 
 ## Current Live Inventory
 
@@ -228,31 +287,27 @@ Weather:
 
 ## Target Cut
 
-### First-class device/function masters
+### Existing first-class Masters
 
-Build these before broad Media or Plug/Power facades:
+These are already live and should be judged by the v2 matrix, not expanded by
+device part:
 
 | Master | Target entity | Owns |
 | --- | --- | --- |
-| PS5 | `sensor.benni_combined_ps5` | PS5 state, media/game context, power/protection facts, source health |
-| PC | `sensor.benni_combined_living_pc` or `sensor.benni_combined_pc` | PC state, gaming/game/headset context, power/protection facts |
-| TV | `sensor.benni_combined_living_tv` or `sensor.benni_combined_tv` | TV state, input/media, notify capability, power/protection facts |
-| Switch | `sensor.benni_combined_nintendo_switch` | Switch/dock/plug state, gaming context, power/protection facts |
-| Denon | `sensor.benni_combined_living_denon` | AVR state, source, volume, route, protection facts |
-| HomePods | `sensor.benni_combined_living_homepods` | MA group playback, radio/manual playback, volume, group health |
-| Coffee | `sensor.benni_combined_kitchen_coffee` | Wake relevance, appliance state, plug/power facts |
-| Washing machine | `sensor.benni_combined_kitchen_washing_machine` | Appliance cycle/protection state, plug/power facts |
-| Dryer | `sensor.benni_combined_kitchen_dryer` | Appliance cycle/protection state, plug/power facts |
-| Dishwasher | `sensor.benni_combined_kitchen_dishwasher` | Appliance cycle/protection state, plug/power facts |
-| Bath | `sensor.benni_combined_bath` | Humidity, shower/toilet, fan decision, sensor health |
-| Weather | `sensor.benni_combined_weather` | Conditions, warning levels, season, weather-derived gates |
+| PS5 | `sensor.benni_master_ps5` | PS5 state, media/game context, power/protection facts, source health |
+| PC | `sensor.benni_master_pc` | PC power/activity/protection facts and gaming context |
+| TV | `sensor.benni_master_tv` | TV/WebOS/watt fallback, notify capability, protection facts |
+| Switch | `sensor.benni_master_switch` | Switch/dock/plug state, gaming context, power/protection facts |
+| Denon | `sensor.benni_master_denon` | AVR state, audio route, policy state, protection facts |
+| HomePods | `sensor.benni_master_homepods` | MA group playback, radio/manual playback, volume, route health |
 
 Openings already has a domain/function master:
 
 - `sensor.benni_combined_openings`
 
-Light and Rollo are currently room/function scoped and can stay scoped while
-they are consolidated:
+Light, Rollo, Bath, Weather, and appliance contracts may become Masters only
+when they satisfy the v2 matrix. Until then, keep them as existing
+device/combined/policy contracts:
 
 - `sensor.benni_combined_living_light`
 - `sensor.benni_combined_living_rollo`

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from typing import Any
 
 import yaml
@@ -38,6 +39,8 @@ from .device_types import (
 
 IMPORT_FILE_PARTS = ("benni_core_devices", "import.yaml")
 IMPORT_FILE_DISPLAY_PATH = "<config>/benni_core_devices/import.yaml"
+IMPORT_SOURCE_FILE = "import_file"
+IMPORT_SOURCE_PAYLOAD = "yaml_payload"
 CONF_REMOVE_DEVICES = "remove_devices"
 CONF_REMOVE_COMBINEDS = "remove_combineds"
 CONF_REMOVE_GROUPS = "remove_light_groups"
@@ -323,6 +326,69 @@ def replace_from_payload(raw: str) -> bool:
     return replace
 
 
+def payload_sha256(payload: str) -> str:
+    """Return the SHA256 of the exact import payload bytes."""
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def import_source_report(
+    payload: str | None,
+    source_type: str,
+    *,
+    path: str | None = None,
+    display_path: str | None = None,
+) -> dict[str, Any]:
+    return {
+        "type": source_type,
+        "path": path,
+        "display_path": display_path,
+        "sha256": payload_sha256(payload) if payload is not None else None,
+        "bytes": len(payload.encode("utf-8")) if payload is not None else 0,
+    }
+
+
+def import_summary(
+    valid: list[dict[str, Any]],
+    imported_groups: dict[str, Any],
+    imported_combineds: dict[str, Any],
+    imported_masters: dict[str, Any],
+    removals: dict[str, list[str]] | None = None,
+    *,
+    resulting: dict[str, int] | None = None,
+) -> dict[str, Any]:
+    removals = removals or {}
+    def removal_count(internal_key: str, import_key: str) -> int:
+        raw = removals.get(internal_key)
+        if raw is None:
+            raw = removals.get(import_key, [])
+        return len(raw)
+
+    summary: dict[str, Any] = {
+        "devices": len(valid),
+        "groups": len(imported_groups),
+        "combineds": len(imported_combineds),
+        "masters": len(imported_masters),
+        "remove_devices": removal_count(CONF_DEVICES, CONF_REMOVE_DEVICES),
+        "remove_groups": removal_count(CONF_LIGHT_GROUPS, CONF_REMOVE_GROUPS),
+        "remove_combineds": removal_count(CONF_COMBINEDS, CONF_REMOVE_COMBINEDS),
+        "remove_masters": removal_count(CONF_MASTERS, CONF_REMOVE_MASTERS),
+    }
+    if resulting is not None:
+        summary["resulting"] = dict(resulting)
+    return summary
+
+
+def rollback_recommendation(replace: bool) -> list[str]:
+    recommendations = [
+        "Run benni_core_devices.export_config and store the YAML before apply."
+    ]
+    if replace:
+        recommendations.append(
+            "replace=true clears existing entries before import; verify the dry-run report and keep the export_config rollback snapshot."
+        )
+    return recommendations
+
+
 def import_report(
     valid: list[dict[str, Any]],
     profile: str,
@@ -462,7 +528,13 @@ def export_yaml_from_options(options: dict[str, Any]) -> str:
     return yaml.safe_dump(payload, sort_keys=False, allow_unicode=True)
 
 
-def error_response(dry_run: bool, replace: bool, message: str) -> dict[str, Any]:
+def error_response(
+    dry_run: bool,
+    replace: bool,
+    message: str,
+    *,
+    source: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     return {
         "dry_run": dry_run,
         "replace": replace,
@@ -475,5 +547,9 @@ def error_response(dry_run: bool, replace: bool, message: str) -> dict[str, Any]
         "master_report": [],
         "combineds_in": 0,
         "masters_in": 0,
+        "summary": import_summary([], {}, {}, {}, {}),
+        "source": source,
+        "integration_version": None,
+        "rollback_recommendation": rollback_recommendation(replace),
         "error": message,
     }

@@ -47,6 +47,8 @@ from .const import (
     WS_BULK_IMPORT,
     WS_EXPORT_CONFIG,
     WS_GET_CATALOG,
+    WS_GET_CONTRACT_CATALOG,
+    WS_GET_RAW_ENTITY_CATALOG,
     WS_GET_STATUS,
     WS_AGENT_SPEC,
     WS_REMOVE_COMBINED,
@@ -59,7 +61,9 @@ from .const import (
     entry_profile,
     master_object_id_prefix,
 )
+from .contract_catalog import build_contract_catalog
 from .coordinator import all_coordinators, combined_coordinators_for_entry, master_coordinators_for_entry
+from .raw_entity_catalog import build_raw_entity_catalog, build_used_by_contracts
 from .bulk_import import (
     apply_bulk,
     combined_derived_binary_sensor_entity_id,
@@ -69,11 +73,15 @@ from .bulk_import import (
     device_sensor_entity_id,
     export_yaml_from_options,
     groups_from_options,
+    IMPORT_SOURCE_PAYLOAD,
     import_report,
+    import_source_report,
     import_start_published_outputs,
+    import_summary,
     masters_from_options,
     parse_bulk_payload,
     published_output_entity_ids,
+    rollback_recommendation,
     source_warnings,
 )
 from .device_types import (
@@ -108,6 +116,15 @@ def _masters(entry: ConfigEntry) -> dict[str, dict[str, Any]]:
 async def _update_options(hass: HomeAssistant, entry: ConfigEntry, options: dict[str, Any]) -> None:
     hass.config_entries.async_update_entry(entry, options=options)
     await hass.config_entries.async_reload(entry.entry_id)
+
+
+async def _integration_version(hass: HomeAssistant) -> str | None:
+    try:
+        from homeassistant.loader import async_get_integration
+
+        return str((await async_get_integration(hass, DOMAIN)).version)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def _json_safe(value: Any) -> Any:
@@ -360,6 +377,10 @@ async def run_bulk_import(
     payload: str,
     dry_run: bool,
     replace: bool = False,
+    *,
+    source_type: str = IMPORT_SOURCE_PAYLOAD,
+    source_path: str | None = None,
+    source_display_path: str | None = None,
 ) -> dict[str, Any]:
     """Geteilte Bulk-Import-Logik für WS-Command UND HA-Service (MCP-fähig).
 
@@ -373,6 +394,13 @@ async def run_bulk_import(
     report = import_report(valid, profile, published_outputs)
     c_report = combined_report(imported_combineds, profile, published_outputs)
     m_report = combined_report(imported_masters, profile, published_outputs, master=True)
+    summary = import_summary(
+        valid,
+        imported_groups,
+        imported_combineds,
+        imported_masters,
+        removals,
+    )
     base = {
         "report": report,
         "combined_report": c_report,
@@ -380,6 +408,15 @@ async def run_bulk_import(
         "combineds_in": len(imported_combineds),
         "masters_in": len(imported_masters),
         "removed": removals,
+        "summary": summary,
+        "source": import_source_report(
+            payload,
+            source_type,
+            path=source_path,
+            display_path=source_display_path,
+        ),
+        "integration_version": await _integration_version(hass),
+        "rollback_recommendation": rollback_recommendation(replace),
     }
     if dry_run:
         return {
@@ -403,11 +440,116 @@ async def run_bulk_import(
         CONF_COMBINEDS: combineds,
         CONF_MASTERS: masters,
     })
+    apply_summary = {
+        **summary,
+        "resulting": {
+            "devices": len(devices),
+            "groups": len(groups),
+            "combineds": len(combineds),
+            "masters": len(masters),
+        },
+    }
     return {
         "dry_run": False, "replace": replace,
         "devices": len(devices), "groups": len(groups),
-        "combineds": len(combineds), "masters": len(masters), **base,
+        "combineds": len(combineds), "masters": len(masters),
+        **base, "summary": apply_summary,
     }
+
+
+def _contract_catalog(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    include_raw_config: bool = False,
+) -> dict[str, Any]:
+    profile = entry_profile(entry)
+    return build_contract_catalog(
+        profile,
+        masters=_masters(entry),
+        combineds=_combineds(entry),
+        devices=_devices(entry),
+        runtime_status=_status(hass, entry),
+        include_raw_config=include_raw_config,
+    )
+
+
+def _state_registry_meta(hass: HomeAssistant, states: list[Any]) -> dict[str, dict[str, Any]]:
+    """Best-effort registry metadata for the current HA state snapshot."""
+    try:
+        from homeassistant.helpers import area_registry as ar
+        from homeassistant.helpers import device_registry as dr
+        from homeassistant.helpers import entity_registry as er
+
+        ent_reg = er.async_get(hass)
+        dev_reg = dr.async_get(hass)
+        area_reg = ar.async_get(hass)
+    except Exception:  # noqa: BLE001
+        return {}
+
+    meta: dict[str, dict[str, Any]] = {}
+    for state in states:
+        entity_id = state.entity_id
+        area_id = None
+        device_id = None
+        device_name = None
+        platform = None
+        area_name = None
+        try:
+            entity_entry = ent_reg.async_get(entity_id)
+        except Exception:  # noqa: BLE001
+            entity_entry = None
+        if entity_entry is not None:
+            area_id = getattr(entity_entry, "area_id", None)
+            device_id = getattr(entity_entry, "device_id", None)
+            platform = getattr(entity_entry, "platform", None)
+        try:
+            device = dev_reg.async_get(device_id) if device_id else None
+        except Exception:  # noqa: BLE001
+            device = None
+        if device is not None:
+            area_id = area_id or getattr(device, "area_id", None)
+            device_name = getattr(device, "name_by_user", None) or getattr(device, "name", None)
+        try:
+            area = area_reg.async_get_area(area_id) if area_id else None
+            area_name = getattr(area, "name", None) if area is not None else None
+        except Exception:  # noqa: BLE001
+            area_name = None
+        meta[entity_id] = {
+            "area_id": area_id,
+            "area_name": area_name,
+            "device_id": device_id,
+            "device_name": device_name,
+            "platform": platform,
+            "integration": platform,
+        }
+    return meta
+
+
+def _raw_entity_catalog(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    *,
+    domain: str | list[str] | None = None,
+    search: str | None = None,
+    only_available: bool = False,
+) -> dict[str, Any]:
+    profile = entry_profile(entry)
+    states = list(hass.states.async_all())
+    used_by = build_used_by_contracts(
+        profile,
+        masters=_masters(entry),
+        combineds=_combineds(entry),
+        devices=_devices(entry),
+    )
+    return build_raw_entity_catalog(
+        states,
+        registry_meta=_state_registry_meta(hass, states),
+        used_by_contracts=used_by,
+        domain=domain,
+        search=search,
+        only_available=only_available,
+    )
 
 
 def _export_yaml(entry: ConfigEntry) -> str:
@@ -439,6 +581,48 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
         except Exception:  # noqa: BLE001
             cat["version"] = "?"
         connection.send_result(msg["id"], cat)
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): WS_GET_CONTRACT_CATALOG,
+        vol.Optional("include_raw_config"): bool,
+    })
+    @websocket_api.async_response
+    async def ws_get_contract_catalog(hass, connection, msg) -> None:
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        connection.send_result(
+            msg["id"],
+            _contract_catalog(
+                hass,
+                entry,
+                include_raw_config=bool(msg.get("include_raw_config")),
+            ),
+        )
+
+    @websocket_api.websocket_command({
+        vol.Required("type"): WS_GET_RAW_ENTITY_CATALOG,
+        vol.Optional("domain"): vol.Any(str, [str]),
+        vol.Optional("search"): str,
+        vol.Optional("only_available"): bool,
+    })
+    @websocket_api.async_response
+    async def ws_get_raw_entity_catalog(hass, connection, msg) -> None:
+        entry = _entry(hass)
+        if entry is None:
+            connection.send_error(msg["id"], "not_ready", "Benni Core Devices not loaded")
+            return
+        connection.send_result(
+            msg["id"],
+            _raw_entity_catalog(
+                hass,
+                entry,
+                domain=msg.get("domain"),
+                search=msg.get("search"),
+                only_available=bool(msg.get("only_available")),
+            ),
+        )
 
     @websocket_api.websocket_command({
         vol.Required("type"): WS_SET_DEVICE,
@@ -622,7 +806,9 @@ def async_setup_websocket_api(hass: HomeAssistant) -> None:
             "json_schema": build_json_schema(),
         })
 
-    for cmd in (ws_get_status, ws_get_catalog, ws_set_device, ws_remove_device,
+    for cmd in (ws_get_status, ws_get_catalog, ws_get_contract_catalog,
+                ws_get_raw_entity_catalog,
+                ws_set_device, ws_remove_device,
                 ws_set_combined, ws_remove_combined, ws_set_group, ws_remove_group,
                 ws_bulk_import, ws_export_config, ws_agent_spec):
         websocket_api.async_register_command(hass, cmd)

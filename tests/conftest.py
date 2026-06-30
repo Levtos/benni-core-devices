@@ -58,6 +58,8 @@ attributes = _load("attributes", "attributes.py")
 combined_expr = _load("combined_expr", "combined_expr.py")
 combined = _load("combined", "combined.py")
 bulk_import = _load("bulk_import", "bulk_import.py")
+contract_catalog = _load("contract_catalog", "contract_catalog.py")
+raw_entity_catalog = _load("raw_entity_catalog", "raw_entity_catalog.py")
 agent_spec = _load("agent_spec", "agent_spec.py")
 
 sys.modules["bcd_const"] = const
@@ -68,4 +70,6 @@ sys.modules["bcd_attributes"] = attributes
 sys.modules["bcd_combined_expr"] = combined_expr
 sys.modules["bcd_combined"] = combined
 sys.modules["bcd_bulk_import"] = bulk_import
+sys.modules["bcd_contract_catalog"] = contract_catalog
+sys.modules["bcd_raw_entity_catalog"] = raw_entity_catalog
 sys.modules["bcd_agent_spec"] = agent_spec

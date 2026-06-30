@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 
 import pytest
@@ -128,8 +129,77 @@ def test_file_error_response_keeps_bulk_report_shape():
         "master_report": [],
         "combineds_in": 0,
         "masters_in": 0,
+        "summary": {
+            "devices": 0,
+            "groups": 0,
+            "combineds": 0,
+            "masters": 0,
+            "remove_devices": 0,
+            "remove_groups": 0,
+            "remove_combineds": 0,
+            "remove_masters": 0,
+        },
+        "source": None,
+        "integration_version": None,
+        "rollback_recommendation": [
+            "Run benni_core_devices.export_config and store the YAML before apply."
+        ],
         "error": "Import file not found",
     }
+
+
+def test_import_source_report_includes_payload_sha256_and_source_path():
+    payload = "devices: []\n"
+
+    report = BI.import_source_report(
+        payload,
+        BI.IMPORT_SOURCE_FILE,
+        path="/homeassistant/benni_core_devices/import.yaml",
+        display_path=BI.IMPORT_FILE_DISPLAY_PATH,
+    )
+
+    assert report == {
+        "type": BI.IMPORT_SOURCE_FILE,
+        "path": "/homeassistant/benni_core_devices/import.yaml",
+        "display_path": BI.IMPORT_FILE_DISPLAY_PATH,
+        "sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "bytes": len(payload.encode("utf-8")),
+    }
+
+
+def test_import_summary_counts_imported_and_removed_items():
+    summary = BI.import_summary(
+        [{"slug": "tv"}],
+        {"living": {}},
+        {"media": {}},
+        {"tv": {}, "denon": {}},
+        {
+            BI.CONF_REMOVE_DEVICES: ["old_device"],
+            BI.CONF_REMOVE_COMBINEDS: ["old_combined"],
+            BI.CONF_REMOVE_MASTERS: ["old_master"],
+        },
+    )
+
+    assert summary == {
+        "devices": 1,
+        "groups": 1,
+        "combineds": 1,
+        "masters": 2,
+        "remove_devices": 1,
+        "remove_groups": 0,
+        "remove_combineds": 1,
+        "remove_masters": 1,
+    }
+
+
+def test_rollback_recommendation_warns_more_strongly_for_replace_imports():
+    assert BI.rollback_recommendation(False) == [
+        "Run benni_core_devices.export_config and store the YAML before apply."
+    ]
+    assert BI.rollback_recommendation(True) == [
+        "Run benni_core_devices.export_config and store the YAML before apply.",
+        "replace=true clears existing entries before import; verify the dry-run report and keep the export_config rollback snapshot.",
+    ]
 
 
 def test_published_output_entity_ids_include_secondary_combined_and_group_outputs():

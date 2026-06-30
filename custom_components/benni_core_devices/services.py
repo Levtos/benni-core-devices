@@ -87,7 +87,9 @@ async def _import_file(hass: HomeAssistant, dry_run: bool) -> dict:
     from .bulk_import import (
         IMPORT_FILE_DISPLAY_PATH,
         IMPORT_FILE_PARTS,
+        IMPORT_SOURCE_FILE,
         error_response,
+        import_source_report,
         replace_from_payload,
     )
     from .websocket_api import _entry, run_bulk_import
@@ -97,6 +99,7 @@ async def _import_file(hass: HomeAssistant, dry_run: bool) -> dict:
         raise HomeAssistantError("Benni Core Devices not loaded")
 
     path = Path(hass.config.path(*IMPORT_FILE_PARTS))
+    source_path = str(path)
     try:
         payload = await hass.async_add_executor_job(
             functools.partial(path.read_text, encoding="utf-8")
@@ -106,20 +109,47 @@ async def _import_file(hass: HomeAssistant, dry_run: bool) -> dict:
             dry_run,
             False,
             f"Import file not found: {IMPORT_FILE_DISPLAY_PATH}",
+            source=import_source_report(
+                None,
+                IMPORT_SOURCE_FILE,
+                path=source_path,
+                display_path=IMPORT_FILE_DISPLAY_PATH,
+            ),
         )
     except OSError as err:
         return error_response(
             dry_run,
             False,
             f"Could not read import file {IMPORT_FILE_DISPLAY_PATH}: {err}",
+            source=import_source_report(
+                None,
+                IMPORT_SOURCE_FILE,
+                path=source_path,
+                display_path=IMPORT_FILE_DISPLAY_PATH,
+            ),
         )
 
     replace = False
+    source = import_source_report(
+        payload,
+        IMPORT_SOURCE_FILE,
+        path=source_path,
+        display_path=IMPORT_FILE_DISPLAY_PATH,
+    )
     try:
         replace = replace_from_payload(payload)
-        return await run_bulk_import(hass, entry, payload, dry_run, replace)
+        return await run_bulk_import(
+            hass,
+            entry,
+            payload,
+            dry_run,
+            replace,
+            source_type=IMPORT_SOURCE_FILE,
+            source_path=source_path,
+            source_display_path=IMPORT_FILE_DISPLAY_PATH,
+        )
     except (TypeError, ValueError, yaml.YAMLError) as err:
-        return error_response(dry_run, replace, str(err))
+        return error_response(dry_run, replace, str(err), source=source)
 
 
 async def _import_file_dry_run(hass: HomeAssistant, call: ServiceCall) -> dict:

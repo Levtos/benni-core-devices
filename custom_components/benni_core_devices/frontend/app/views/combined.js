@@ -189,7 +189,7 @@ function previewCard(d, status) {
       <h2>Preview / Output</h2>
       <div class="preview">
         <div class="summary-line"><ha-icon icon="mdi:identifier"></ha-icon><span class="mono pv-id">${esc(entityId)}</span></div>
-        <div class="summary-line"><ha-icon icon="mdi:set-merge"></ha-icon>Combined</div>
+        <div class="summary-line"><ha-icon icon="mdi:set-merge"></ha-icon>Legacy Combined</div>
         <div class="summary-line"><ha-icon icon="mdi:export"></ha-icon>Output-Typ: <b>${esc(d.output_type)}</b></div>
         <div class="summary-line"><ha-icon icon="mdi:numeric"></ha-icon>Aktuell: <b>${esc(live ? live.state : "—")}</b></div>
         <div class="summary-line"><ha-icon icon="mdi:comment-text-outline"></ha-icon>Reason: ${esc(live ? a.reason : "—")}</div>
@@ -217,12 +217,16 @@ export function render(root, ctx) {
   if (!root._cdraft) root._cdraft = blankDraft();
   const d = root._cdraft;
 
-  // ── Template-Auswahl (Einstieg für neue Combineds) ──────────────────────
+  // ── Template-Auswahl (Legacy-Einstieg für bestehende Combineds) ─────────
   if (!d._template) {
     root.innerHTML = `
+      <div class="card muted-card" style="margin-bottom:14px">
+        <div class="row"><ha-icon icon="mdi:archive-alert-outline"></ha-icon>
+          <span class="muted" style="font-size:12px">Legacy-/Expertenbereich. Combineds sind Kompatibilitäts- und Retire-Kandidaten. Masters/Contracts sind der Zielpfad; hier nur bestehende Legacy-Logik pflegen.</span></div>
+      </div>
       <div class="card">
         <div class="section-head">
-          <h2>Combined erstellen — Vorlage wählen</h2>
+          <h2>Legacy Combined bearbeiten — Vorlage wählen</h2>
           <select id="editPick" style="min-width:200px">
             <option value="">Bestehendes bearbeiten…</option>
             ${combineds.map((c) => `<option value="${esc(c.slug)}">${esc(c.display_name || c.slug)}</option>`).join("")}
@@ -254,6 +258,10 @@ export function render(root, ctx) {
   const canAddSource = d._template === "any_active" || d._template === "custom" || d._expert;
 
   root.innerHTML = `
+    <div class="card muted-card" style="margin-bottom:14px">
+      <div class="row"><ha-icon icon="mdi:archive-alert-outline"></ha-icon>
+        <span class="muted" style="font-size:12px">Legacy-/Expertenbereich. Combineds bleiben nur als Kompatibilitätsbrücke erhalten; neue Ziel-Contracts werden als Masters/Context Contracts geplant.</span></div>
+    </div>
     <div class="split">
       <div>
         <form id="combinedForm" class="form">
@@ -336,7 +344,7 @@ export function render(root, ctx) {
           </details>
 
           <div class="row">
-            <button class="btn primary" type="submit">Speichern</button>
+            <button class="btn primary" type="submit">Legacy Combined speichern</button>
             <button class="btn" type="button" id="resetC">Neu</button>
             ${d.slug ? `<button class="btn danger" type="button" id="deleteC">Löschen</button>` : ""}
           </div>
@@ -376,7 +384,7 @@ export function render(root, ctx) {
 
   root.querySelector("#resetC").addEventListener("click", () => { root._cdraft = blankDraft(); ctx.rerender(); });
   const del = root.querySelector("#deleteC");
-  if (del) del.addEventListener("click", async () => { await ctx.store.removeCombined(d.slug); root._cdraft = blankDraft(); ctx.toast("Combined gelöscht"); ctx.rerender(); });
+  if (del) del.addEventListener("click", async () => { await ctx.store.removeCombined(d.slug); root._cdraft = blankDraft(); ctx.toast("Legacy Combined gelöscht"); ctx.rerender(); });
 
   form.addEventListener("submit", async (ev) => {
     ev.preventDefault();
@@ -395,7 +403,7 @@ export function render(root, ctx) {
       },
     });
     root._cdraft = blankDraft();
-    ctx.toast("Combined gespeichert");
+    ctx.toast("Legacy Combined gespeichert");
     ctx.rerender();
   });
 }

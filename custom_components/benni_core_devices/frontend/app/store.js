@@ -5,6 +5,8 @@ export class Store {
     this.hass = null;
     this.status = null;
     this.catalog = null;
+    this.contractCatalog = null;
+    this.rawEntityCatalog = null;
   }
 
   _ws(msg) {
@@ -20,6 +22,22 @@ export class Store {
     this.status = status;
     this.catalog = catalog;
     return this;
+  }
+
+  async getContractCatalog() {
+    const result = await this._ws({ type: `${DOMAIN}/get_contract_catalog` });
+    this.contractCatalog = result;
+    return result;
+  }
+
+  async getRawEntityCatalog(filters = {}) {
+    const payload = { type: `${DOMAIN}/get_raw_entity_catalog` };
+    if (filters.domain) payload.domain = filters.domain;
+    if (filters.search) payload.search = filters.search;
+    if (filters.only_available) payload.only_available = true;
+    const result = await this._ws(payload);
+    this.rawEntityCatalog = result;
+    return result;
   }
 
   async setDevice(payload) {

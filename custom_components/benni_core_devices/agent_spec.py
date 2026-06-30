@@ -3,7 +3,7 @@
 Erzeugt aus dem v2-Rollen-/Klassenkatalog ein selbsterklärendes Briefing für
 eine frische Claude-Code-/Codex-Session mit MCP-Anbindung an HA:
 - ``build_briefing(version, profile, export_yaml)`` → Markdown-Prompt
-- ``build_json_schema()`` → JSON-Schema (draft-07) des Import-/Combined-Payloads
+- ``build_json_schema()`` → JSON-Schema (draft-07) des Import-Payloads
 
 Der Generator löst KEINEN Agenten aus — er liefert nur Text/Schema zum Kopieren.
 """
@@ -123,13 +123,13 @@ devices:
 ```"""
 
 _COMBINED_EXAMPLE = """```yaml
-# Combineds may live in the SAME bulk_import YAML under `combineds:`
-# (dict slug -> config), OR be created individually via WS `set_combined`
-# ({slug?, display_name, config}).
+# Masters live under `masters:` and publish `sensor.<profile>_master_<slug>`.
+# Device/Domain Masters are the public target contracts. They own local device
+# or primitive domain truth and may consume raw HA entities plus stable contracts
+# only along a documented, directed signal flow.
 #
-# Domain masters live under `masters:` and publish
-# `sensor.<profile>_master_<slug>`. Masters MUST consume raw HA entities only;
-# they combine the old atomic+combined contract in one sensor.
+# Combineds are legacy compatibility only. Do not add or extend Combineds as the
+# target architecture; use them only for a deliberate migration bridge.
 combineds:
   opening_state:
     display_name: "Opening State"
@@ -164,20 +164,45 @@ def build_briefing(version: str, profile: str, export_yaml: str) -> str:
     blocked = ", ".join(f"`*{s}`" for s in BLOCKED_SOURCE_SUFFIXES)
     own = f"`{profile}_device_*`, `{profile}_combined_*`, `{profile}_master_*`, `{profile}_light_group_*`"
     classes = "\n".join(_class_block(ATOMIC_CLASSES[c], profile) for c in ALL_ATOMIC_CLASSES)
-    return f"""# Benni Core Devices — Agent Briefing (Atomics + Combined)
+    return f"""# Benni Core Devices — Agent Briefing (Masters / Context / Policy)
 
 Contract/integration version: **{version}** · profile (route): **{profile}**
 
-You are authoring the **atomic + combined layer** of the Home Assistant custom
-integration `benni_core_devices`. You have an MCP connection to this HA instance —
-use it to discover raw entities. Follow this contract exactly; validate with
-dry-run before applying.
+You are authoring or reviewing the **Core Devices contract foundation** for the
+Home Assistant custom integration `benni_core_devices`. The target architecture is:
+
+Raw HA Entities
+-> private Normalizer / Source Adapter
+-> Device/Domain Masters
+-> Fusion/Context Contracts
+-> Policies
+-> Apply Layer
+
+Use MCP to discover raw entities and existing stable contracts. Follow the
+ownership rules below and validate import payloads with dry-run before applying.
 
 ## Golden rules
-- Consume **only raw HA entities**. NEVER use as a source: entity_ids ending in
-  {blocked}, or starting with this integration's own output {own}.
-- **One physical device = one atomic** → `sensor.{profile}_device_<slug>`.
-  Per-device, not per-feature.
+- Do not create new Atomics.
+- Do not create new Combineds.
+- Existing Atomics and Combineds are legacy compatibility and retire candidates.
+- Masters are the public target contracts.
+- Small normalizers/source adapters stay internal/private and are not published
+  as Home Assistant entities.
+- Device Masters own local device truth.
+- Primitive Domain Masters own reusable base truth such as Opening, Weather, or Door.
+- Fusion/Context Contracts may consume stable Masters and derive new context truth.
+- Policies make decisions.
+- Apply executes decisions through raw actuators.
+- Masters may consume stable other contracts only along a documented, directed
+  signal flow.
+- Do not create bidirectional dependencies.
+- Do not create deep parent/child hierarchies.
+- Do not build mega-sensors only to reduce entity count.
+- Every calculated value has exactly one owner.
+- Projection is allowed; duplicate calculation is forbidden.
+- Treat entity_ids ending in {blocked}, or starting with this integration's own
+  outputs {own}, as non-raw. Use them only where the target layer explicitly
+  allows stable-contract input, never as raw device evidence.
 - **Metadata is auto-derived** (title/app/source/volume/mute/artist/album) from the
   `primary_state` entity's attributes. Do NOT add `metadata_sources` unless a
   *separate* entity is required (rare, e.g. a dedicated console title sensor).
@@ -188,7 +213,28 @@ dry-run before applying.
 - A binding may set `attribute:` next to `entity:`; then the source value is
   `state_attr(entity, attribute)` instead of the entity state. Use this for
   weather entities such as `weather.dwd_home` (`temperature`, `humidity`, ...)
-  and for Combined sources reading attributes from published Core Devices outputs.
+  and for Master/Context sources reading attributes from published stable contracts.
+
+## Media ownership
+- Existing Media Masters remain Device Masters:
+  `sensor.benni_master_tv`, `sensor.benni_master_denon`,
+  `sensor.benni_master_appletv`, `sensor.benni_master_ps5`,
+  `sensor.benni_master_switch`, `sensor.benni_master_pc`.
+- `is_active`, `watt`, `watt_active`, local availability, and local capabilities
+  stay device-owned.
+- `media_context`, `entertainment_active`, and the globally active
+  `gaming_platform` belong to `media_state` / Media Context.
+- `subwoofer_should_be_on`, audio target paths, and volume decisions belong to
+  `media_policy`.
+- Final plug protection decisions such as `power_cut_unsafe` and
+  `plug_cut_allowed` belong to `plug_policy_engine`.
+- `media_apply` executes only; it must not own media context or policy truth.
+
+## Opening ownership
+- Opening/window truth is its own Domain Master, not a child of Blind or Climate.
+- Blind and Climate may project Opening values.
+- Blind and Climate must not recalculate window logic from raw contacts when an
+  Opening Master exists.
 
 ## Workflow
 > Import/export is available **both** as WebSocket commands and as **HA services**
@@ -205,27 +251,36 @@ dry-run before applying.
 1. **Read current config** (avoid duplicates): service `export_config` (MCP) or
    WS `benni_core_devices/export_config`.
 2. **Discover** raw entities via the HA MCP tools (search/list/states).
-3. **Draft** the devices YAML (schema below) and any combined configs.
-4. **Validate devices**: service `import_file_dry_run` (MCP) or WS
+3. **Draft** Masters or Context/Fusion configs first. Use `devices:` or
+   `combineds:` only for explicit legacy compatibility or migration bridges.
+4. **Validate payloads**: service `import_file_dry_run` (MCP) or WS
    `benni_core_devices/bulk_import` with `dry_run: true`.
    Resolve every `missing_required` and `derived_sources` entry; note the resulting
    `entity_id`s.
-5. **Apply devices**: service `import_file_apply` (MCP) or the same WS command
+5. **Apply accepted payloads**: service `import_file_apply` (MCP) or the same WS command
    with `dry_run: false`.
-6. **Combineds**: either include a `combineds:` block in the bulk_import YAML
-   (dict slug → config; validated by the same dry-run), or create each via WS
-   `benni_core_devices/set_combined` `{{slug?, display_name, config}}`.
+6. **Combineds**: legacy compatibility only. If a migration explicitly needs one,
+   include a `combineds:` block in the bulk_import YAML (dict slug → config;
+   validated by the same dry-run), or create it via WS
+   `benni_core_devices/set_combined` `{{slug?, display_name, config}}`. Do not
+   extend Combineds as target architecture.
 7. **Masters**: include a `masters:` block in the bulk_import YAML. Masters
-   publish `sensor.{profile}_master_<slug>` and are raw-only. Use top-level
-   `remove_devices:` / `remove_combineds:` when replacing obsolete atomics or
-   combineds with a master.
+   publish `sensor.{profile}_master_<slug>`. Device Masters own device truth;
+   Domain Masters own primitive domain truth; Context/Fusion contracts derive
+   context from stable Masters. Use top-level `remove_devices:` /
+   `remove_combineds:` when replacing obsolete legacy entities with a Master.
 
 ## Roles
 {_role_table()}
 
-## Atomic classes
+## Legacy device class catalog
+These `atomic_class` values are part of the existing import schema and runtime
+compatibility model. They are not a request to create new Atomics as target
+architecture.
 {classes}
-## Devices import YAML
+## Legacy devices import YAML
+Use `devices:` only for compatibility or explicit migration work. New target
+contracts should normally be Masters or Context/Fusion contracts.
 {_DEVICE_EXAMPLE}
 
 Runtime keys (`watt_threshold_on`, `sticky_hold_seconds`, `expose_secondary_sensors`,
@@ -234,7 +289,9 @@ Runtime keys (`watt_threshold_on`, `sticky_hold_seconds`, `expose_secondary_sens
 (`power_meter`) decides powered/active; the plug switch is only a fallback when the
 meter is stale, and `sticky_hold_seconds` bridges short zero-watt phases mid-cycle.
 
-## Combined config
+## Legacy Combined config
+Combineds remain supported by the import format for compatibility, migration,
+and retire work. Do not create or extend Combineds as the target architecture.
 output_type: {", ".join(f"`{t}`" for t in OUTPUT_TYPE_CHOICES)} ·
 operators: {", ".join(f"`{o}`" for o in COMBINED_OPERATOR_CHOICES)} ·
 fail_safe: {", ".join(f"`{f}`" for f in FAIL_SAFE_CHOICES)}
@@ -247,19 +304,19 @@ derived value to its own entity is the exception for History/native-HA use; the
 default is `expose`/`exposed_attributes`. Use optional `object_id` only when a
 specific binary_sensor object id must stay stable.
 
-### Combined v1 derived_values (optional, additive)
+### Legacy Combined v1 derived_values (optional, additive)
 Named intermediate values, evaluated before the rules; rules/output may reference
 `${{name}}` and `${{self}}` (own last output). Output may be `"${{name}}"`.
 - `expr` (number): formula over `${{refs}}`, ops `+ - * /` `== != < <= > >=` `and or not`,
   funcs `min,max,abs,round(x[,n]),clamp(x,lo,hi)`. None-propagating (unavailable → fail_safe).
 - `gate` (bool): same parser; `any([...])`/`all([...])`/`not(x)`.
 - `enum` (string): ordered `cases: [{{when, output}}]`, first true wins, else `default`.
-- `health`: `atomics: [src_key, ...]` → `ok|degraded|problem`.
+- `health`: `atomics: [src_key, ...]` → `ok|degraded|problem` for legacy configs.
 - `latch`: `set:` / `reset:` gate-expressions (Schmitt hysteresis); holds between; `fail_safe`.
 - `previous`: expose `${{self}}`.
 fail_safe per node or config: `off|open|hold_last|unknown`. Timers/`since` = v1.1 (rejected).
 Set `expose: true` on a node or top-level `exposed_attributes: [name, ...]` to publish
-selected derived values as flat top-level attributes on the Combined/Fusion sensor.
+selected derived values as flat top-level attributes on the legacy Combined/Fusion sensor.
 Default is internal-only.
 ```yaml
   derived_values:

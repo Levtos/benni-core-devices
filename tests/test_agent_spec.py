@@ -14,6 +14,9 @@ def test_briefing_contains_core_contract():
     # Golden rules / blocked sources
     assert "_atomic" in md and "_combined" in md and "_gate" in md
     assert "benni_device_*" in md
+    assert "Do not create new Atomics" in md
+    assert "Do not create new Combineds" in md
+    assert "Masters are the public target contracts" in md
     # Metadaten-Ableitung + Workflow
     assert "auto-derived" in md
     assert "dry_run" in md
@@ -47,4 +50,4 @@ def test_json_schema_shape():
 def test_briefing_uses_profile_prefix():
     md = AS.build_briefing("0.3.2", "eltern", "")
     assert "eltern_device_*" in md
-    assert "sensor.eltern_device_" in md
+    assert "sensor.eltern_master_" in md

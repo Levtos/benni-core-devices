@@ -298,6 +298,8 @@ PANEL_ELEMENT = "bcd-app"
 
 WS_GET_STATUS = f"{DOMAIN}/get_status"
 WS_GET_CATALOG = f"{DOMAIN}/get_catalog"
+WS_GET_CONTRACT_CATALOG = f"{DOMAIN}/get_contract_catalog"
+WS_GET_RAW_ENTITY_CATALOG = f"{DOMAIN}/get_raw_entity_catalog"
 WS_SET_DEVICE = f"{DOMAIN}/set_device"
 WS_REMOVE_DEVICE = f"{DOMAIN}/remove_device"
 WS_SET_GROUP = f"{DOMAIN}/set_group"

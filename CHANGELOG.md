@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0-alpha.5 - Door Lock Master Alpha
+
+- Parallelen Door/Lock Domain Master fuer Aqara U200 vorbereitet.
+- Keine Door-Policy-Migration.
+- Keine Lock-/Unlock-/Apply-Aenderung.
+- Keine Consumer-Migration.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.4 - Weather Outdoor Master Alpha
 
 - Parallelen Weather/Outdoor Domain Master vorbereitet.

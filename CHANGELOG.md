@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0-alpha.8 - Switch Master Stabilization Alpha
+
+- Switch Device Master stabilisiert.
+- Switch-Meter-Verfuegbarkeit und Detection-Mode transparenter gemacht.
+- Media Context Degraded-Grund wegen Switch bleibt konservativ sichtbar.
+- Keine Media-Policy-Migration.
+- Keine Plug-Policy-Migration.
+- Keine Apply-/Servicecall-Aenderung.
+- Keine Consumer-Migration.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.7 - Safe Contract Refs + Media Context Alpha
 
 - Safe Contract Refs zwischen veroeffentlichten Masters/Contracts eingefuehrt.

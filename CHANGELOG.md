@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0-alpha.2 - Opening Domain Master Alpha
+
+- `sensor.benni_master_opening` als parallelen Opening-/Fenster-Domain-Master vorbereitet.
+- `sensor.benni_combined_openings` bleibt unveraendert als Legacy-Bruecke bestehen.
+- Keine Consumer-Migration.
+- Keine Rollo-/Climate-Migration.
+- Keine Legacy-Loeschung.
+- Keine neuen Atomics oder Combineds.
+
 ## 0.5.0-alpha.1 - Contract Workbench Alpha
 
 - Core Devices UI semantisch auf Contract Workbench ausgerichtet.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0-alpha.3 - Climate Room Master Alpha
+
+- Parallele Climate Room Masters fuer Wohnzimmer, Kueche und Bad vorbereitet.
+- Keine Climate-Policy-Migration.
+- Keine Heizungs-/Apply-Aenderung.
+- Keine Legacy-Loeschung.
+- `sensor.benni_master_opening` bleibt der bestehende Opening-Contract.
+
 ## 0.5.0-alpha.2 - Opening Domain Master Alpha
 
 - `sensor.benni_master_opening` als parallelen Opening-/Fenster-Domain-Master vorbereitet.

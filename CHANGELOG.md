@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0-alpha.6 - Plug Power Domain Alpha
+
+- Plug/Power Master-Schicht ueber `sensor.benni_master_household_plug` erweitert.
+- Kaffee-Power als Household-Plug-Quelle in den Contract aufgenommen.
+- Summary-/Diagnoseattribute fuer Power, Availability und Counts ergaenzt.
+- Keine Plug-Policy-Migration.
+- Keine Media-Policy-Migration.
+- Keine Apply-/Schaltaktion.
+- Keine Consumer-Migration.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.5 - Door Lock Master Alpha
 
 - Parallelen Door/Lock Domain Master fuer Aqara U200 vorbereitet.

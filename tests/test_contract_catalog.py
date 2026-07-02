@@ -118,5 +118,34 @@ def test_contract_catalog_leaves_unknown_master_unknown_without_hints():
     assert "raw_config" not in master
 
 
+def test_contract_catalog_reports_configured_fusion_context():
+    catalog = CC.build_contract_catalog(
+        "benni",
+        masters={
+            "media_context": {
+                "display_name": "Media Context",
+                "contract_kind": "fusion_context",
+                "migration_status": "target",
+                "sources": [
+                    {
+                        "key": "tv",
+                        "role": "tv_active",
+                        "entity": "sensor.benni_master_tv",
+                        "attribute": "is_active",
+                    }
+                ],
+            }
+        },
+        devices={},
+        combineds={},
+    )
+
+    master = catalog["masters"][0]
+    assert master["entity_id"] == "sensor.benni_master_media_context"
+    assert master["contract_kind"] == "fusion_context"
+    assert master["migration_status"] == "target"
+    assert master["contract_refs"] == ["sensor.benni_master_tv"]
+
+
 def test_contract_catalog_websocket_command_constant():
     assert C.WS_GET_CONTRACT_CATALOG == "benni_core_devices/get_contract_catalog"

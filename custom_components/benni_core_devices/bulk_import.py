@@ -113,6 +113,16 @@ def master_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{master_object_id_prefix(profile)}{slug}"
 
 
+def _master_slug_from_entity_id(profile: str, entity_id: Any) -> str | None:
+    if not isinstance(entity_id, str):
+        return None
+    prefix = f"sensor.{master_object_id_prefix(profile)}"
+    if not entity_id.startswith(prefix):
+        return None
+    slug = entity_id.removeprefix(prefix).strip()
+    return slug or None
+
+
 def group_sensor_entity_id(profile: str, slug: str) -> str:
     return f"sensor.{group_object_id_prefix(profile)}{slug}"
 
@@ -418,6 +428,90 @@ def import_report(
         })
     return report
 
+
+def _master_contract_refs(
+    masters: dict[str, dict[str, Any]],
+    profile: str,
+    allowed_master_entities: set[str],
+) -> dict[str, set[str]]:
+    imported = {str(slug) for slug in masters}
+    graph: dict[str, set[str]] = {str(slug): set() for slug in masters}
+    for slug, conf in masters.items():
+        if not isinstance(conf, dict):
+            continue
+        current = str(slug)
+        for eid in conf_source_entities(conf):
+            ref_slug = _master_slug_from_entity_id(profile, eid)
+            if (
+                ref_slug
+                and ref_slug in imported
+                and str(eid) in allowed_master_entities
+            ):
+                graph[current].add(ref_slug)
+    return graph
+
+
+def _has_path(
+    graph: dict[str, set[str]],
+    start: str,
+    target: str,
+    seen: set[str] | None = None,
+) -> bool:
+    if start == target:
+        return True
+    visited = seen if seen is not None else set()
+    if start in visited:
+        return False
+    visited.add(start)
+    return any(_has_path(graph, dep, target, visited) for dep in graph.get(start, set()))
+
+
+def _cyclic_master_contract_refs(graph: dict[str, set[str]]) -> set[tuple[str, str]]:
+    out: set[tuple[str, str]] = set()
+    for slug, deps in graph.items():
+        for dep in deps:
+            if dep == slug or _has_path(graph, dep, slug):
+                out.add((slug, dep))
+    return out
+
+
+def _master_source_check(
+    *,
+    slug: str,
+    entity_id: str,
+    profile: str,
+    own: tuple[str, ...],
+    allowed_master_entities: set[str],
+    cyclic_refs: set[tuple[str, str]],
+) -> tuple[bool, str | None]:
+    ref_slug = _master_slug_from_entity_id(profile, entity_id)
+    if ref_slug:
+        if ref_slug == slug:
+            return (
+                False,
+                f"{entity_id}: Master-/Contract-Quelle darf sich nicht selbst referenzieren",
+            )
+        if entity_id not in allowed_master_entities:
+            return (
+                False,
+                f"forward reference auf noch-nicht-publizierten Master-/Contract-Output: {entity_id}",
+            )
+        if (slug, ref_slug) in cyclic_refs:
+            return (
+                False,
+                f"{entity_id}: zyklische Master-/Contract-Quelle ist nicht erlaubt",
+            )
+        return (
+            True,
+            f"{entity_id}: publizierter Master-/Contract-Output als Contract-Quelle akzeptiert",
+        )
+
+    cat = classify_source_entity(entity_id, own_prefixes=own)
+    if cat:
+        return False, source_warning_text(cat, entity_id)
+    return True, None
+
+
 def combined_report(
     combineds: dict[str, dict[str, Any]],
     profile: str,
@@ -427,6 +521,23 @@ def combined_report(
 ) -> list[dict[str, Any]]:
     own = own_prefixes(profile)
     published = set(published_outputs or set())
+    imported_master_entities: set[str] = set()
+    cyclic_master_refs: set[tuple[str, str]] = set()
+    if master:
+        imported_master_entities = {
+            master_sensor_entity_id(profile, str(slug))
+            for slug, conf in combineds.items()
+            if isinstance(conf, dict)
+        }
+        allowed_master_entities = {
+            eid for eid in published | imported_master_entities
+            if _master_slug_from_entity_id(profile, eid)
+        }
+        cyclic_master_refs = _cyclic_master_contract_refs(
+            _master_contract_refs(combineds, profile, allowed_master_entities)
+        )
+    else:
+        allowed_master_entities = set()
     rep: list[dict[str, Any]] = []
     for slug, conf in combineds.items():
         cfg = parse_combined(slug, conf)
@@ -440,9 +551,18 @@ def combined_report(
                 if not src.entity:
                     continue
                 if master:
-                    cat = classify_source_entity(src.entity, own_prefixes=own)
-                    if cat:
-                        msg = source_warning_text(cat, src.entity)
+                    ok, msg = _master_source_check(
+                        slug=str(slug),
+                        entity_id=src.entity,
+                        profile=profile,
+                        own=own,
+                        allowed_master_entities=allowed_master_entities,
+                        cyclic_refs=cyclic_master_refs,
+                    )
+                    if ok:
+                        if msg:
+                            accepted_sources.append(msg)
+                    elif msg:
                         derived_sources.append(msg)
                         source_blocks.append(msg)
                     continue

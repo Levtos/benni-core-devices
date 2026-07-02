@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.5.0-alpha.4 - Weather Outdoor Master Alpha
+
+- Parallelen Weather/Outdoor Domain Master vorbereitet.
+- Weather-Symbol/Icon-Signal als rohe und normalisierte Contract-Attribute erhalten.
+- Keine Consumer-Migration.
+- Keine Climate-/Blind-/Rollo-Migration.
+- Keine Apply-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.3 - Climate Room Master Alpha
 
 - Parallele Climate Room Masters fuer Wohnzimmer, Kueche und Bad vorbereitet.

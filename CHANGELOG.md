@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0-alpha.7 - Safe Contract Refs + Media Context Alpha
+
+- Safe Contract Refs zwischen veroeffentlichten Masters/Contracts eingefuehrt.
+- Parallelen Media Context Contract vorbereitet.
+- Keine Media-Policy-Migration.
+- Keine Plug-Policy-Migration.
+- Keine Apply-/Servicecall-Aenderung.
+- Keine Consumer-Migration.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.6 - Plug Power Domain Alpha
 
 - Plug/Power Master-Schicht ueber `sensor.benni_master_household_plug` erweitert.

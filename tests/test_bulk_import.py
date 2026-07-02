@@ -366,14 +366,54 @@ def test_combined_report_allows_references_to_earlier_imported_combineds_only():
     ]
 
 
-def test_master_report_blocks_core_outputs_even_when_published():
+def test_master_report_allows_published_master_contract_sources():
     report = BI.combined_report(
         {
-            "living_tv": {
-                "display_name": "Living TV Master",
+            "media_context": {
+                "display_name": "Media Context",
+                "contract_kind": "fusion_context",
                 "sources": [
                     {
-                        "key": "old_atomic",
+                        "key": "tv",
+                        "role": "tv_device",
+                        "entity": "sensor.benni_master_tv",
+                        "attribute": "is_active",
+                    },
+                    {
+                        "key": "ps5",
+                        "role": "gaming_device",
+                        "entity": "sensor.benni_master_ps5",
+                        "attribute": "is_active",
+                    },
+                ],
+                "default_output": "idle",
+            }
+        },
+        "benni",
+        {
+            "sensor.benni_master_tv",
+            "sensor.benni_master_ps5",
+        },
+        master=True,
+    )
+
+    assert report[0]["accepted"] is True
+    assert report[0]["entity_id"] == "sensor.benni_master_media_context"
+    assert report[0]["source_blocks"] == []
+    assert report[0]["accepted_sources"] == [
+        "sensor.benni_master_tv: publizierter Master-/Contract-Output als Contract-Quelle akzeptiert",
+        "sensor.benni_master_ps5: publizierter Master-/Contract-Output als Contract-Quelle akzeptiert",
+    ]
+
+
+def test_master_report_blocks_legacy_core_outputs_even_when_published():
+    report = BI.combined_report(
+        {
+            "media_context": {
+                "display_name": "Media Context",
+                "sources": [
+                    {
+                        "key": "old_device",
                         "role": "tv_device",
                         "entity": "sensor.benni_device_living_tv",
                     },
@@ -383,7 +423,7 @@ def test_master_report_blocks_core_outputs_even_when_published():
                         "entity": "sensor.benni_combined_media_context",
                     },
                 ],
-                "default_output": "off",
+                "default_output": "idle",
             }
         },
         "benni",
@@ -395,10 +435,123 @@ def test_master_report_blocks_core_outputs_even_when_published():
     )
 
     assert report[0]["accepted"] is False
-    assert report[0]["entity_id"] == "sensor.benni_master_living_tv"
     assert report[0]["source_blocks"] == [
         "sensor.benni_device_living_tv: von dieser Integration selbst erzeugte Quelle sollte nicht als Raw-Quelle dienen",
         "sensor.benni_combined_media_context: von dieser Integration selbst erzeugte Quelle sollte nicht als Raw-Quelle dienen",
+    ]
+
+
+def test_master_report_blocks_unknown_master_contract_source():
+    report = BI.combined_report(
+        {
+            "media_context": {
+                "display_name": "Media Context",
+                "sources": [
+                    {
+                        "key": "fake",
+                        "role": "fake_master",
+                        "entity": "sensor.benni_master_fake",
+                    }
+                ],
+                "default_output": "idle",
+            }
+        },
+        "benni",
+        {"sensor.benni_master_tv"},
+        master=True,
+    )
+
+    assert report[0]["accepted"] is False
+    assert report[0]["source_blocks"] == [
+        "forward reference auf noch-nicht-publizierten Master-/Contract-Output: "
+        "sensor.benni_master_fake"
+    ]
+
+
+def test_master_report_blocks_self_reference():
+    report = BI.combined_report(
+        {
+            "media_context": {
+                "display_name": "Media Context",
+                "sources": [
+                    {
+                        "key": "self",
+                        "role": "self",
+                        "entity": "sensor.benni_master_media_context",
+                    }
+                ],
+                "default_output": "idle",
+            }
+        },
+        "benni",
+        {"sensor.benni_master_media_context"},
+        master=True,
+    )
+
+    assert report[0]["accepted"] is False
+    assert report[0]["source_blocks"] == [
+        "sensor.benni_master_media_context: "
+        "Master-/Contract-Quelle darf sich nicht selbst referenzieren"
+    ]
+
+
+def test_master_report_blocks_contract_cycles():
+    report = BI.combined_report(
+        {
+            "a": {
+                "display_name": "A",
+                "sources": [{"key": "b", "role": "contract", "entity": "sensor.benni_master_b"}],
+                "default_output": "idle",
+            },
+            "b": {
+                "display_name": "B",
+                "sources": [{"key": "a", "role": "contract", "entity": "sensor.benni_master_a"}],
+                "default_output": "idle",
+            },
+        },
+        "benni",
+        set(),
+        master=True,
+    )
+
+    assert [r["accepted"] for r in report] == [False, False]
+    assert report[0]["source_blocks"] == [
+        "sensor.benni_master_b: zyklische Master-/Contract-Quelle ist nicht erlaubt"
+    ]
+    assert report[1]["source_blocks"] == [
+        "sensor.benni_master_a: zyklische Master-/Contract-Quelle ist nicht erlaubt"
+    ]
+
+
+def test_master_report_allows_acyclic_contract_chain():
+    report = BI.combined_report(
+        {
+            "a": {
+                "display_name": "A",
+                "sources": [{"key": "b", "role": "contract", "entity": "sensor.benni_master_b"}],
+                "default_output": "idle",
+            },
+            "b": {
+                "display_name": "B",
+                "sources": [{"key": "c", "role": "contract", "entity": "sensor.benni_master_c"}],
+                "default_output": "idle",
+            },
+            "c": {
+                "display_name": "C",
+                "default_output": "idle",
+            },
+        },
+        "benni",
+        set(),
+        master=True,
+    )
+
+    assert [r["accepted"] for r in report] == [True, True, True]
+    assert report[0]["accepted_sources"] == [
+        "sensor.benni_master_b: publizierter Master-/Contract-Output als Contract-Quelle akzeptiert"
+    ]
+    assert report[1]["accepted_sources"] == [
+        "sensor.benni_master_c: publizierter Master-/Contract-Output als Contract-Quelle akzeptiert"
     ]
 
 

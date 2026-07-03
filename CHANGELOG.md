@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.0-alpha.10 - Opening Contract Field Hardening
+
+- Opening Contract Field Hardening vorbereitet.
+- Aussenoeffnungen getrennt von Etagentuer abgebildet.
+- Opening-Code-Projektion aus dem Lastenheft ergaenzt.
+- Apartment-/Outside-Felder ergaenzt.
+- Konflikt-/Unclear-Mapping ergaenzt.
+- Keine Consumer-Migration.
+- Keine Policy-/Apply-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.9 - Contract Hardening Baseline
 
 - Contract-Hardening-Baseline eingefuehrt.

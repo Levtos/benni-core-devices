@@ -16,6 +16,7 @@ nur reine Entscheidungen.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -432,9 +433,22 @@ def _resolve(ref: str, readings: dict[str, SourceReading], env: dict[str, Any]) 
 
 
 def _maybe_ref(output: Any, env: dict[str, Any]) -> Any:
-    """Erlaubt Output ``"${name}"`` → löst auf einen derived/source-Wert auf."""
-    if isinstance(output, str) and output.startswith("${") and output.endswith("}"):
+    """Resolve exact ``"${name}"`` outputs and interpolate enum strings."""
+    if isinstance(output, str) and re.fullmatch(r"\$\{[^}]+\}", output):
         return env.get(output[2:-1].strip())
+    if isinstance(output, str) and "${" in output:
+        missing = False
+
+        def repl(match: re.Match[str]) -> str:
+            nonlocal missing
+            value = env.get(match.group(1).strip())
+            if value is None:
+                missing = True
+                return ""
+            return str(value)
+
+        rendered = re.sub(r"\$\{([^}]+)\}", repl, output)
+        return None if missing else rendered
     return output
 
 
@@ -497,6 +511,14 @@ def evaluate_combined(
     degraded = bool(degraded_reason) or bool(missing_sources)
     for s in missing_sources:
         degraded_reason.append(f"{s}: missing entity")
+    source_quality = derived_out.get("source_quality")
+    if source_quality is not None and str(source_quality) != "ok":
+        degraded = True
+        hint = derived_out.get("degraded_reason_hint")
+        if hint:
+            degraded_reason.append(str(hint))
+        else:
+            degraded_reason.append(f"source_quality:{source_quality}")
 
     return CombinedResult(
         state=coerce_output(output, config.output_type),

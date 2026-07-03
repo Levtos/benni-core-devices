@@ -519,3 +519,168 @@ def test_weather_unknown_symbol_remains_unknown_not_sunny_or_rainy():
     assert res.derived["is_sunny_hint"] is False
     assert res.derived["is_rainy_hint"] is False
     assert res.derived["source_quality"] == "problem"
+
+
+def _weather_dwd_contract_fields_cfg():
+    return _cfg(
+        output_type="enum",
+        sources=(
+            _src("source_weather_state", "weather_condition", "weather.dwd_home"),
+            _src("source_weather_temperature", "weather_temperature", "weather.dwd_home"),
+            _src("source_weather_humidity", "weather_humidity", "weather.dwd_home"),
+            _src("source_cloud_coverage", "cloud_coverage", "weather.dwd_home"),
+            _src("source_dwd_wind_speed", "dwd_wind_speed", "weather.dwd_home"),
+            _src("source_dwd_wind_bearing", "dwd_wind_bearing", "weather.dwd_home"),
+            _src("source_outdoor_temperature", "outdoor_temperature", "sensor.garden_climate_temperature"),
+            _src("source_forecast_temperature_3h", "forecast_temperature_3h", "weather.dwd_home", required=False),
+        ),
+        derived_values=(
+            CB.DerivedValue(
+                name="weather_symbol_normalized",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when='${source_weather_state} == "sunny"', output="sunny"),
+                    CB.DerivedCase(when='${source_weather_state} == "rainy"', output="rainy"),
+                    CB.DerivedCase(when='${source_weather_state} == "partlycloudy"', output="partlycloudy"),
+                ),
+                default="unknown",
+                expose=True,
+            ),
+            CB.DerivedValue(name="dwd_source", kind="enum", default="weather.dwd_home", expose=True),
+            CB.DerivedValue(name="dwd_condition", kind="enum", default="${source_weather_state}", expose=True),
+            CB.DerivedValue(name="dwd_temperature", kind="expr", expr="${source_weather_temperature}", expose=True),
+            CB.DerivedValue(name="dwd_wind_speed", kind="expr", expr="${source_dwd_wind_speed}", expose=True),
+            CB.DerivedValue(name="dwd_wind_bearing", kind="expr", expr="${source_dwd_wind_bearing}", expose=True),
+            CB.DerivedValue(name="forecast_temperature_3h", kind="expr", expr="${source_forecast_temperature_3h}", expose=True),
+            CB.DerivedValue(name="forecast_available", kind="gate", expr="${source_forecast_temperature_3h} != null", expose=True),
+            CB.DerivedValue(
+                name="forecast_source",
+                kind="enum",
+                cases=(CB.DerivedCase(when="${source_forecast_temperature_3h} != null", output="weather.dwd_home.forecast_temperature_3h"),),
+                default="unavailable",
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="dwd_available",
+                kind="gate",
+                expr="${source_weather_state} != null and ${source_weather_temperature} != null and ${source_weather_humidity} != null and ${source_cloud_coverage} != null and ${source_dwd_wind_speed} != null and ${source_dwd_wind_bearing} != null",
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="source_quality",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when="${source_weather_state} == null or ${source_outdoor_temperature} == null", output="problem"),
+                    CB.DerivedCase(when="${source_forecast_temperature_3h} == null", output="degraded"),
+                    CB.DerivedCase(
+                        when="${source_weather_temperature} == null or ${source_weather_humidity} == null or ${source_cloud_coverage} == null or ${source_dwd_wind_speed} == null or ${source_dwd_wind_bearing} == null",
+                        output="degraded",
+                    ),
+                ),
+                default="ok",
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="weather_degraded_reason",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when="${source_weather_state} == null", output="weather_source_unavailable"),
+                    CB.DerivedCase(when="${source_outdoor_temperature} == null", output="outdoor_temperature_unavailable"),
+                    CB.DerivedCase(when="${source_forecast_temperature_3h} == null", output="forecast_temperature_3h_unavailable"),
+                    CB.DerivedCase(
+                        when="${source_weather_temperature} == null or ${source_weather_humidity} == null or ${source_cloud_coverage} == null or ${source_dwd_wind_speed} == null or ${source_dwd_wind_bearing} == null",
+                        output="dwd_supporting_source_unavailable",
+                    ),
+                ),
+                default="none",
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="degraded_reason_hint",
+                kind="enum",
+                cases=(CB.DerivedCase(when='${weather_degraded_reason} != "none"', output="${weather_degraded_reason}"),),
+                default="",
+                expose=True,
+            ),
+        ),
+        rules=(
+            CB.CombinedRule(source="source_quality", op="eq", value="problem", output="unavailable"),
+            CB.CombinedRule(source="source_quality", op="eq", value="degraded", output="degraded"),
+        ),
+        default_output="ready",
+    )
+
+
+def test_weather_dwd_contract_fields_keep_unknown_weather_unknown():
+    cfg = _weather_dwd_contract_fields_cfg()
+
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "source_weather_state": _r(None, available=False),
+            "source_weather_temperature": _r(12.0, numeric=12.0),
+            "source_weather_humidity": _r(80.0, numeric=80.0),
+            "source_cloud_coverage": _r(90.0, numeric=90.0),
+            "source_dwd_wind_speed": _r(8.0, numeric=8.0),
+            "source_dwd_wind_bearing": _r(270.0, numeric=270.0),
+            "source_outdoor_temperature": _r(11.5, numeric=11.5),
+            "source_forecast_temperature_3h": _r(None, available=False),
+        },
+    )
+
+    assert res.state == "unavailable"
+    assert res.derived["weather_symbol_normalized"] == "unknown"
+    assert res.derived["dwd_condition"] is None
+    assert res.derived["source_quality"] == "problem"
+    assert "weather_source_unavailable" in res.degraded_reason
+
+
+def test_weather_dwd_contract_fields_forecast_unavailable_is_visible():
+    cfg = _weather_dwd_contract_fields_cfg()
+
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "source_weather_state": _r("partlycloudy"),
+            "source_weather_temperature": _r(23.4, numeric=23.4),
+            "source_weather_humidity": _r(42.0, numeric=42.0),
+            "source_cloud_coverage": _r(50.0, numeric=50.0),
+            "source_dwd_wind_speed": _r(11.0, numeric=11.0),
+            "source_dwd_wind_bearing": _r(292.0, numeric=292.0),
+            "source_outdoor_temperature": _r(23.02, numeric=23.02),
+            "source_forecast_temperature_3h": _r(None, available=False),
+        },
+    )
+
+    assert res.state == "degraded"
+    assert res.derived["forecast_available"] is False
+    assert res.derived["forecast_temperature_3h"] is None
+    assert res.derived["forecast_source"] == "unavailable"
+    assert res.derived["dwd_available"] is True
+    assert res.derived["source_quality"] == "degraded"
+    assert "forecast_temperature_3h_unavailable" in res.degraded_reason
+
+
+def test_weather_dwd_contract_fields_forecast_value_is_factual_only():
+    cfg = _weather_dwd_contract_fields_cfg()
+
+    res = CB.evaluate_combined(
+        cfg,
+        {
+            "source_weather_state": _r("sunny"),
+            "source_weather_temperature": _r(20.0, numeric=20.0),
+            "source_weather_humidity": _r(50.0, numeric=50.0),
+            "source_cloud_coverage": _r(10.0, numeric=10.0),
+            "source_dwd_wind_speed": _r(6.0, numeric=6.0),
+            "source_dwd_wind_bearing": _r(180.0, numeric=180.0),
+            "source_outdoor_temperature": _r(19.0, numeric=19.0),
+            "source_forecast_temperature_3h": _r(18.2, numeric=18.2),
+        },
+    )
+
+    assert res.state == "ready"
+    assert res.derived["weather_symbol_normalized"] == "sunny"
+    assert res.derived["forecast_available"] is True
+    assert res.derived["forecast_temperature_3h"] == 18.2
+    assert res.derived["forecast_source"] == "weather.dwd_home.forecast_temperature_3h"
+    assert res.derived["source_quality"] == "ok"

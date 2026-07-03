@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.5.0-alpha.11 - Weather/DWD Contract Fields for Climate Alignment
+
+- Weather/DWD Contract Fields fuer Climate Alignment vorbereitet.
+- DWD-Verfuegbarkeit, Quelle, Condition, Temperatur und Wind-Fakten als Contract-Felder vorgesehen.
+- Forecast-Verfuegbarkeit und Forecast-Source-Felder konservativ vorbereitet.
+- Forecast-Degraded-Reason ergaenzt; fehlender Forecast wird sichtbar statt still auf 0 oder ok zu fallen.
+- `weather_symbol_normalized` bleibt erhalten und unknown bleibt unknown.
+- `feels_like_temperature` nicht ergaenzt, weil keine direkte DWD-/Raw-Quelle vorhanden ist.
+- Keine Climate-Policy-Migration.
+- Keine Consumer-Migration.
+- Keine Apply-/Servicecall-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.10 - Opening Contract Field Hardening
 
 - Opening Contract Field Hardening vorbereitet.

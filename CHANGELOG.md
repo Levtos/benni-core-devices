@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.0-alpha.9 - Contract Hardening Baseline
+
+- Contract-Hardening-Baseline eingefuehrt.
+- Unknown-/Fallback-Regeln dokumentiert und gezielt getestet.
+- Last-Known-Good-/Grace-Window-Pattern vorbereitet.
+- Activity Context Zielbild vorbereitet.
+- Keine Consumer-Migration.
+- Keine Policy-/Apply-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.8 - Switch Master Stabilization Alpha
 
 - Switch Device Master stabilisiert.

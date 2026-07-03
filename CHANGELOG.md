@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.5.0 - Stable Contract/Master Baseline
+
+- Contract/Master Baseline stabilisiert.
+- Opening Master live validiert.
+- Climate Room Masters live validiert.
+- Weather/Outdoor Master live validiert.
+- Door/Lock Master live validiert.
+- Household Plug/Power erweitert.
+- Safe Contract Refs eingefuehrt.
+- Media Context live validiert.
+- Switch Master konservativ stabilisiert.
+- Contract-Hardening-Baseline eingefuehrt.
+- Opening Contract Field Hardening live validiert.
+- Weather/DWD Contract Fields live validiert.
+- Keine Consumer-Migration.
+- Keine Policy-/Apply-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0-alpha.11 - Weather/DWD Contract Fields for Climate Alignment
 
 - Weather/DWD Contract Fields fuer Climate Alignment vorbereitet.

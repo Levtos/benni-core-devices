@@ -611,6 +611,148 @@ def _weather_dwd_contract_fields_cfg():
     )
 
 
+def _living_rollo_contract_hardening_cfg():
+    return _cfg(
+        output_type="enum",
+        sources=(
+            _src("source_cover_state", "cover_state", "cover.wohnbereich_thermo_verdunklungsrollo"),
+            _src("source_current_position", "cover_position", "cover.wohnbereich_thermo_verdunklungsrollo"),
+            _src("source_battery", "cover_battery", "sensor.wohnbereich_thermo_verdunklungsrollo_battery"),
+            _src("source_running", "cover_running", "binary_sensor.wohnbereich_thermo_verdunklungsrollo_running"),
+            _src("living_left_open", "opening_contact", "binary_sensor.living_window_left_open_contact"),
+            _src("living_left_tilt", "tilt_contact", "binary_sensor.living_window_left_tilt_contact"),
+            _src("living_right_open", "opening_contact", "binary_sensor.living_window_right_open_contact"),
+            _src("living_right_tilt", "tilt_contact", "binary_sensor.living_window_right_tilt_contact"),
+            _src("source_opening_contract_state", "opening_contract", "sensor.benni_master_opening"),
+            _src("source_opening_outside_all_closed", "opening_contract_outside_all_closed", "sensor.benni_master_opening"),
+            _src("source_opening_source_quality", "opening_contract_source_quality", "sensor.benni_master_opening"),
+            _src("source_weather_contract_state", "weather_contract", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_symbol_normalized", "weather_contract_symbol_normalized", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_outdoor_temperature", "weather_contract_outdoor_temperature", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_illuminance", "weather_contract_illuminance", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_lux_state", "weather_contract_lux_state", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_sun_elevation", "weather_contract_sun_elevation", "sensor.benni_master_weather_outdoor"),
+            _src("source_weather_source_quality", "weather_contract_source_quality", "sensor.benni_master_weather_outdoor"),
+        ),
+        derived_values=(
+            CB.DerivedValue(name="cover_state", kind="enum", default="${source_cover_state}", expose=True),
+            CB.DerivedValue(name="current_position", kind="expr", expr="${source_current_position}", expose=True),
+            CB.DerivedValue(name="battery", kind="expr", expr="${source_battery}", expose=True),
+            CB.DerivedValue(name="cover_available", kind="gate", expr="${source_cover_state} != null", expose=True),
+            CB.DerivedValue(
+                name="is_moving",
+                kind="gate",
+                expr='${source_running} == "on" or ${source_cover_state} == "opening" or ${source_cover_state} == "closing"',
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="legacy_raw_opening_state",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when='${living_left_open} == "on" or ${living_right_open} == "on"', output="open"),
+                    CB.DerivedCase(when='${living_left_tilt} == "on" or ${living_right_tilt} == "on"', output="tilted"),
+                    CB.DerivedCase(
+                        when="${living_left_open} == null or ${living_left_tilt} == null or ${living_right_open} == null or ${living_right_tilt} == null",
+                        output="stale",
+                    ),
+                ),
+                default="closed",
+                expose=True,
+            ),
+            CB.DerivedValue(name="opening_state", kind="enum", default="${source_opening_contract_state}", expose=True),
+            CB.DerivedValue(
+                name="opening_outside_all_closed",
+                kind="gate",
+                expr='${source_opening_outside_all_closed} == true or ${source_opening_outside_all_closed} == "true" or ${source_opening_outside_all_closed} == "on"',
+                expose=True,
+            ),
+            CB.DerivedValue(name="opening_source_quality", kind="enum", default="${source_opening_source_quality}", expose=True),
+            CB.DerivedValue(name="opening_safe_for_blind", kind="gate", expr="${opening_outside_all_closed}", expose=True),
+            CB.DerivedValue(name="weather_state", kind="enum", default="${source_weather_contract_state}", expose=True),
+            CB.DerivedValue(name="weather_symbol_normalized", kind="enum", default="${source_weather_symbol_normalized}", expose=True),
+            CB.DerivedValue(name="outdoor_temperature", kind="expr", expr="${source_weather_outdoor_temperature}", expose=True),
+            CB.DerivedValue(name="illuminance", kind="expr", expr="${source_weather_illuminance}", expose=True),
+            CB.DerivedValue(name="lux_state", kind="enum", default="${source_weather_lux_state}", expose=True),
+            CB.DerivedValue(name="sun_elevation", kind="expr", expr="${source_weather_sun_elevation}", expose=True),
+            CB.DerivedValue(name="weather_source_quality", kind="enum", default="${source_weather_source_quality}", expose=True),
+            CB.DerivedValue(
+                name="source_quality",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when="${source_cover_state} == null", output="problem"),
+                    CB.DerivedCase(
+                        when='${source_opening_contract_state} == null or ${source_opening_source_quality} != "ok" or ${source_opening_outside_all_closed} == null',
+                        output="degraded",
+                    ),
+                    CB.DerivedCase(
+                        when='${source_weather_contract_state} == null or ${source_weather_source_quality} != "ok"',
+                        output="degraded",
+                    ),
+                    CB.DerivedCase(
+                        when="${source_weather_illuminance} == null or ${source_weather_lux_state} == null or ${source_weather_sun_elevation} == null",
+                        output="degraded",
+                    ),
+                    CB.DerivedCase(when="${source_current_position} == null or ${source_battery} == null or ${source_running} == null", output="degraded"),
+                ),
+                default="ok",
+                expose=True,
+            ),
+            CB.DerivedValue(
+                name="degraded_reason_hint",
+                kind="enum",
+                cases=(
+                    CB.DerivedCase(when="${source_cover_state} == null", output="cover_source_unavailable"),
+                    CB.DerivedCase(
+                        when='${source_opening_contract_state} == null or ${source_opening_source_quality} != "ok" or ${source_opening_outside_all_closed} == null',
+                        output="opening_contract_degraded",
+                    ),
+                    CB.DerivedCase(
+                        when='${source_weather_contract_state} == null or ${source_weather_source_quality} != "ok"',
+                        output="weather_contract_degraded",
+                    ),
+                    CB.DerivedCase(
+                        when="${source_weather_illuminance} == null or ${source_weather_lux_state} == null or ${source_weather_sun_elevation} == null",
+                        output="lux_source_unavailable",
+                    ),
+                    CB.DerivedCase(when="${source_battery} == null", output="battery_source_unavailable"),
+                ),
+                default="",
+                expose=True,
+            ),
+        ),
+        rules=(
+            CB.CombinedRule(source="source_quality", op="eq", value="problem", output="blocked", reason="source_quality_problem"),
+            CB.CombinedRule(source="source_quality", op="eq", value="degraded", output="degraded", reason="source_quality_degraded"),
+            CB.CombinedRule(source="opening_state", op="eq", value="open", output="window_open", reason="living_window_open"),
+            CB.CombinedRule(source="is_moving", op="eq", value="on", output="moving", reason="cover_running"),
+        ),
+        default_output="ready",
+    )
+
+
+def _living_rollo_ok_readings():
+    return {
+        "source_cover_state": _r("open"),
+        "source_current_position": _r(60, numeric=60.0),
+        "source_battery": _r(83, numeric=83.0),
+        "source_running": _r("off"),
+        "living_left_open": _r("off"),
+        "living_left_tilt": _r("off"),
+        "living_right_open": _r("off"),
+        "living_right_tilt": _r("off"),
+        "source_opening_contract_state": _r("closed"),
+        "source_opening_outside_all_closed": _r(True),
+        "source_opening_source_quality": _r("ok"),
+        "source_weather_contract_state": _r("degraded"),
+        "source_weather_symbol_normalized": _r("partlycloudy"),
+        "source_weather_outdoor_temperature": _r(24.2, numeric=24.2),
+        "source_weather_illuminance": _r(18000, numeric=18000.0),
+        "source_weather_lux_state": _r("bright"),
+        "source_weather_sun_elevation": _r(22.0, numeric=22.0),
+        "source_weather_source_quality": _r("ok"),
+    }
+
+
 def test_weather_dwd_contract_fields_keep_unknown_weather_unknown():
     cfg = _weather_dwd_contract_fields_cfg()
 
@@ -684,3 +826,72 @@ def test_weather_dwd_contract_fields_forecast_value_is_factual_only():
     assert res.derived["forecast_temperature_3h"] == 18.2
     assert res.derived["forecast_source"] == "weather.dwd_home.forecast_temperature_3h"
     assert res.derived["source_quality"] == "ok"
+
+
+def test_living_rollo_opening_projection_uses_opening_master_not_raw_contacts():
+    cfg = _living_rollo_contract_hardening_cfg()
+    readings = _living_rollo_ok_readings()
+    readings["living_left_open"] = _r("on")
+
+    res = CB.evaluate_combined(cfg, readings)
+
+    assert {src.entity for src in cfg.sources if src.key.startswith("source_opening_")} == {
+        "sensor.benni_master_opening",
+    }
+    assert res.state == "ready"
+    assert res.derived["opening_state"] == "closed"
+    assert res.derived["legacy_raw_opening_state"] == "open"
+    assert res.derived["opening_safe_for_blind"] is True
+    assert res.derived["source_quality"] == "ok"
+
+
+def test_living_rollo_unknown_opening_contract_is_degraded_and_not_safe():
+    cfg = _living_rollo_contract_hardening_cfg()
+    readings = _living_rollo_ok_readings()
+    readings["source_opening_contract_state"] = _r("unknown")
+    readings["source_opening_outside_all_closed"] = _r(None, available=False)
+    readings["source_opening_source_quality"] = _r("problem")
+
+    res = CB.evaluate_combined(cfg, readings)
+
+    assert res.state == "degraded"
+    assert res.derived["opening_state"] == "unknown"
+    assert res.derived["opening_outside_all_closed"] is False
+    assert res.derived["opening_safe_for_blind"] is False
+    assert res.derived["source_quality"] == "degraded"
+    assert "opening_contract_degraded" in res.degraded_reason
+
+
+def test_living_rollo_weather_lux_projection_uses_weather_master_and_degrades_unknown_lux():
+    cfg = _living_rollo_contract_hardening_cfg()
+    readings = _living_rollo_ok_readings()
+    readings["source_weather_symbol_normalized"] = _r("unknown")
+    readings["source_weather_illuminance"] = _r(None, available=False)
+    readings["source_weather_lux_state"] = _r("unknown")
+
+    res = CB.evaluate_combined(cfg, readings)
+
+    assert {src.entity for src in cfg.sources if src.key.startswith("source_weather_")} == {
+        "sensor.benni_master_weather_outdoor",
+    }
+    assert res.state == "degraded"
+    assert res.derived["weather_symbol_normalized"] == "unknown"
+    assert res.derived["illuminance"] is None
+    assert res.derived["lux_state"] == "unknown"
+    assert res.derived["source_quality"] == "degraded"
+    assert "lux_source_unavailable" in res.degraded_reason
+
+
+def test_living_rollo_cover_unavailable_is_problem_not_closed_or_idle():
+    cfg = _living_rollo_contract_hardening_cfg()
+    readings = _living_rollo_ok_readings()
+    readings["source_cover_state"] = _r(None, available=False)
+
+    res = CB.evaluate_combined(cfg, readings)
+
+    assert res.state == "blocked"
+    assert res.derived["cover_state"] is None
+    assert res.derived["cover_available"] is False
+    assert res.derived["is_moving"] is False
+    assert res.derived["source_quality"] == "problem"
+    assert "cover_source_unavailable" in res.degraded_reason

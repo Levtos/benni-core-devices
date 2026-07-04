@@ -147,5 +147,45 @@ def test_contract_catalog_reports_configured_fusion_context():
     assert master["contract_refs"] == ["sensor.benni_master_tv"]
 
 
+def test_contract_catalog_preserves_explicit_device_and_mixed_metadata():
+    catalog = CC.build_contract_catalog(
+        "benni",
+        masters={
+            "pc": {
+                "display_name": "PC",
+                "contract_kind": "device_master",
+                "migration_status": "target",
+                "contract_version": 1,
+                "sources": [{"key": "state", "role": "pc_supply", "entity": "switch.pc"}],
+            },
+            "living_rollo": {
+                "display_name": "Living Rollo",
+                "contract_kind": "mixed",
+                "migration_status": "target",
+                "contract_version": 1,
+                "contract_note": "Mixed transitional contract.",
+                "legacy_projection": True,
+                "policy_projection_fields": ["heat_candidate", "plug_policy_decision"],
+                "sources": [{"key": "cover", "role": "cover_state", "entity": "cover.living"}],
+            },
+        },
+        include_raw_config=True,
+    )
+
+    pc = catalog["masters"][0]
+    rollo = catalog["masters"][1]
+
+    assert pc["contract_kind"] == "device_master"
+    assert pc["migration_status"] == "target"
+    assert pc["raw_config"]["contract_version"] == 1
+    assert rollo["contract_kind"] == "mixed"
+    assert rollo["migration_status"] == "target"
+    assert rollo["raw_config"]["legacy_projection"] is True
+    assert rollo["raw_config"]["policy_projection_fields"] == [
+        "heat_candidate",
+        "plug_policy_decision",
+    ]
+
+
 def test_contract_catalog_websocket_command_constant():
     assert C.WS_GET_CONTRACT_CATALOG == "benni_core_devices/get_contract_catalog"

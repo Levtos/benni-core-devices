@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.5.2 - Contract Catalog Hardening
+
+- Contract Catalog Hardening vorbereitet.
+- Aeltere Device-Masters explizit als `device_master` markiert.
+- Domain-/Fusion-Contracts bleiben explizit als `domain_master` bzw. `fusion_context` klassifiziert.
+- `living_rollo` als Mixed-/Transitional-Contract dokumentiert.
+- Keine Runtime-Logikaenderung.
+- Keine Consumer-Migration.
+- Keine Policy-/Apply-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.1 - Living Rollo Contract Hardening
 
 - Living Rollo Contract Hardening vorbereitet.

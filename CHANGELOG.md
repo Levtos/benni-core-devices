@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.5.1 - Living Rollo Contract Hardening
+
+- Living Rollo Contract Hardening vorbereitet.
+- Opening-Projektion aus `sensor.benni_master_opening` ergaenzt.
+- Weather-/Lux-Projektion aus `sensor.benni_master_weather_outdoor` ergaenzt.
+- Cover-/Rollo-Fakten und degraded reasons geschaerft.
+- Policy-nahe Felder bleiben Legacy-/Projection-Felder und werden nicht als Ziel-Ownership des Masters erweitert.
+- Keine Rollo-/Blind-Policy-Migration.
+- Keine Consumer-Migration.
+- Keine Apply-/Servicecall-Aenderung.
+- Keine Legacy-Loeschung.
+
 ## 0.5.0 - Stable Contract/Master Baseline
 
 - Contract/Master Baseline stabilisiert.
